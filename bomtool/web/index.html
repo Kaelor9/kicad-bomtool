@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KiCad BOM-tjek</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" stroke="currentColor" stroke-width="2"/></svg>
+    <span>KiCad BOM-tjek</span>
+  </div>
+  <div class="top-actions">
+    <span id="providerBadge" class="badge muted">Ingen grosist-API</span>
+    <button class="btn ghost" id="btnSettings">Indstillinger</button>
+  </div>
+</header>
+
+<div id="updBanner" class="upd hidden"></div>
+<main>
+  <section id="inputView">
+    <div class="grid3">
+      <div class="card drop" data-kind="project">
+        <h2><span class="num">1</span> KiCad-projekt</h2>
+        <p class="hint">Zip-fil med projektmappen – eller vælg mappen direkte. KiCad 6–10.</p>
+        <div class="dropzone" id="dzProject">
+          <p>Træk zip-fil eller mappe hertil</p>
+          <div class="row">
+            <label class="btn">Vælg zip/filer<input type="file" id="fProject" multiple accept=".zip,.kicad_sch,.kicad_pcb,.kicad_pro,.kicad_mod" hidden></label>
+            <label class="btn ghost">Vælg mappe<input type="file" id="fProjectDir" webkitdirectory hidden></label>
+          </div>
+        </div>
+        <ul class="files" id="lProject"></ul>
+      </div>
+      <div class="card drop" data-kind="dist">
+        <h2><span class="num">2</span> Grosist-BOM <span class="opt">valgfri</span></h2>
+        <p class="hint">Kurv/BOM fra Mouser, DigiKey, LCSC, Farnell … CSV, XLSX eller XLS. Ingen skabelon nødvendig.</p>
+        <div class="dropzone" id="dzDist">
+          <p>Træk filer hertil</p>
+          <label class="btn">Vælg filer<input type="file" id="fDist" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,.html" hidden></label>
+        </div>
+        <ul class="files" id="lDist"></ul>
+      </div>
+      <div class="card drop" data-kind="refs">
+        <h2><span class="num">3</span> Producent-footprints <span class="opt">valgfri</span></h2>
+        <p class="hint">.kicad_mod fra producent, SnapEDA, Ultra Librarian eller SamacSys – bruges som facit. Navngiv dem efter MPN eller footprint-navn.</p>
+        <div class="dropzone" id="dzRefs">
+          <p>Træk .kicad_mod / zip hertil</p>
+          <label class="btn">Vælg filer<input type="file" id="fRefs" multiple accept=".kicad_mod,.zip" hidden></label>
+        </div>
+        <ul class="files" id="lRefs"></ul>
+      </div>
+    </div>
+
+    <div class="card options">
+      <div class="opt-grid">
+        <label>Antal print<input type="number" id="oBoards" min="1" value="1"></label>
+        <label>Reserve, passive (%)<input type="number" id="oSpareP" min="0" value="10"></label>
+        <label>Min. ekstra passive (stk.)<input type="number" id="oSpareMin" min="0" value="2"></label>
+        <label>Reserve, øvrige (%)<input type="number" id="oSpare" min="0" value="0"></label>
+        <label>"Køb flere" hvis højst + (kr.)<input type="number" id="oExtraAbs" min="0" value="5" step="0.5"></label>
+        <label>… eller + (%)<input type="number" id="oExtraPct" min="0" value="10"></label>
+        <label class="check"><input type="checkbox" id="oApi" checked> Hent priser, lager og datablade</label>
+        <label class="check"><input type="checkbox" id="oSuggest" checked> Foreslå MPN til passive uden varenummer</label>
+        <label class="check"><input type="checkbox" id="oDs" checked> Læs datablade (pakke pr. MPN)</label>
+        <label class="check"><input type="checkbox" id="oHist" checked> Gem analysen i historikken</label>
+      </div>
+      <div class="run">
+        <button class="btn primary big" id="btnRun" disabled>Analysér</button>
+        <div class="progress hidden" id="progress"><div class="bar"><div id="progBar"></div></div><span id="progMsg"></span></div>
+      </div>
+    </div>
+
+    <div class="card hidden" id="histCard">
+      <h2>Tidligere analyser</h2>
+      <p class="hint">Gemt på denne computer. Åbn en for at se den igen – priserne er fra dengang.</p>
+      <div class="tbl-wrap"><table><thead><tr><th>Tidspunkt</th><th>Projekt</th><th class="num">Komponenter</th><th class="num">Linjer</th><th>Status</th><th class="num">Pris (mix)</th><th></th></tr></thead><tbody id="histBody"></tbody></table></div>
+    </div>
+  </section>
+
+  <section id="resultView" class="hidden">
+    <div class="res-head">
+      <div>
+        <h1 id="rTitle"></h1>
+        <p class="hint" id="rSub"></p>
+      </div>
+      <div class="row">
+        <button class="btn ghost" id="btnBack">← Ny analyse</button>
+        <button class="btn" id="btnExportBom">Eksportér BOM (CSV)</button>
+      </div>
+    </div>
+    <div class="tiles" id="tiles"></div>
+    <div id="notices"></div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="bom" class="active">BOM</button>
+      <button data-tab="fp">Footprints</button>
+      <button data-tab="dist">Grosist-sammenligning</button>
+      <button data-tab="buy">Indkøb &amp; priser</button>
+      <button data-tab="excl">Udeladt</button>
+      <button data-tab="diff">Ændringer</button>
+      <label class="filter"><input type="checkbox" id="onlyProblems"> Vis kun problemer</label>
+    </nav>
+    <div id="tabBody"></div>
+  </section>
+</main>
+
+<div class="drawer hidden" id="drawer">
+  <div class="drawer-panel">
+    <button class="close" id="drawerClose" aria-label="Luk">×</button>
+    <div id="drawerBody"></div>
+  </div>
+</div>
+
+<dialog id="cmp" class="cmp">
+  <button class="close" id="cmpClose" aria-label="Luk">×</button>
+  <div id="cmpBody"></div>
+</dialog>
+
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <h2>Indstillinger</h2>
+    <p class="hint">Nøglerne gemmes kun på denne computer (i din brugermappe) og sendes kun til grosisternes egne API'er.</p>
+    <fieldset>
+      <legend>DigiKey <a href="https://developer.digikey.com/" target="_blank" rel="noopener">hent nøgle</a></legend>
+      <label>Client ID<input name="digikey_client_id" autocomplete="off"></label>
+      <label>Client Secret<input name="digikey_client_secret" type="password" autocomplete="off"></label>
+      <label>Kundenummer <span class="opt">valgfri – giver dine egne priser</span><input name="digikey_customer_id" autocomplete="off"></label>
+    </fieldset>
+    <fieldset>
+      <legend>Mouser <a href="https://www.mouser.dk/api-hub/" target="_blank" rel="noopener">hent nøgle</a></legend>
+      <label>Search API key<input name="mouser_key" type="password" autocomplete="off"></label>
+      <label>Cart/Order API key <span class="opt">valgfri – til "Læg i Mouser-kurv"</span><input name="mouser_cart_key" type="password" autocomplete="off"></label>
+    </fieldset>
+    <fieldset>
+      <legend>Nexar / Octopart – Farnell, TME, RS, Arrow m.fl. <a href="https://nexar.com/api" target="_blank" rel="noopener">hent nøgle</a></legend>
+      <label>Client ID<input name="nexar_client_id" autocomplete="off"></label>
+      <label>Client Secret<input name="nexar_client_secret" type="password" autocomplete="off"></label>
+    </fieldset>
+    <fieldset class="inline">
+      <label>Valuta<input name="currency" maxlength="3"></label>
+      <label>Land<input name="country" maxlength="2"></label>
+    </fieldset>
+    <fieldset>
+      <legend>Opdateringer</legend>
+      <label class="check"><input type="checkbox" id="chkUpdates"> Tjek for nye versioner ved start</label>
+      <p class="hint" id="verInfo"></p>
+      <button type="button" class="btn small ghost" id="btnCheckUpd">Tjek nu</button>
+    </fieldset>
+    <div id="testResult" class="hint"></div>
+    <div class="row end">
+      <button type="button" class="btn ghost" id="btnTest">Test forbindelse</button>
+      <button type="button" class="btn ghost" id="btnCancel">Luk</button>
+      <button type="button" class="btn primary" id="btnSave">Gem</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="footprint.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
