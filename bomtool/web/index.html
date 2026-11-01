@@ -102,21 +102,12 @@
       <button data-tab="diff">Ændringer</button>
       <label class="filter"><input type="checkbox" id="onlyProblems"> Vis kun problemer</label>
     </nav>
-    <div id="tabBody"></div>
+    <div class="workspace">
+      <div id="tabBody"></div>
+      <aside id="side" class="side" aria-label="Kontrolpanel"></aside>
+    </div>
   </section>
 </main>
-
-<div class="drawer hidden" id="drawer">
-  <div class="drawer-panel">
-    <button class="close" id="drawerClose" aria-label="Luk">×</button>
-    <div id="drawerBody"></div>
-  </div>
-</div>
-
-<dialog id="cmp" class="cmp">
-  <button class="close" id="cmpClose" aria-label="Luk">×</button>
-  <div id="cmpBody"></div>
-</dialog>
 
 <dialog id="settings">
   <form method="dialog" id="settingsForm">

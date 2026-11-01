@@ -23,6 +23,20 @@ Valgfrit: `pip install pypdf openpyxl xlrd` – bedre læsning af datablade, hur
 
 ## Hvad den gør
 
+Programmet er et **kontrolprogram**. Resultatet vises som komponenttabellen til venstre og et
+kontrolpanel til højre for den valgte komponent (pil op/ned skifter). Hver linje kontrolleres i tre trin,
+som også står som kolonner i tabellen:
+
+| Trin | Spørgsmål | Panelet viser |
+|---|---|---|
+| 1 Footprint | Passer komponenten i KiCad med det valgte footprint? | footprintet med målestreger, pakke, ben ↔ pads, KiCad-bibliotek/producent-CAD |
+| 2 Datablad | Passer footprintet med databladet? | databladets mål-tabel, land pattern og pinout side om side med footprintet, og selve tegningen |
+| 3 Indkøb | Kan den købes som valgt? | grosist-BOM'en, priser og lager pr. sælger |
+
+Er en komponent ikke på lager, udgået eller ikke fundet, søges der automatisk efter **alternativer**
+(samme værdi/pakke, eller samme pakke og pinout for IC'er). Vælger du et alternativ, bruges det i
+indkøbslisten og kurven – KiCad-projektet ændres ikke.
+
 1. **Læser projektet** – zip-fil eller hele mappen. Følger hierarkiske ark (også genbrugte ark),
    multi-unit symboler, DNP, "Exclude from BOM", og springer monteringshuller/logoer over.
 2. **Finder MPN, producent, datablad** – genkender felter som `MPN`, `Mfr. No`, `Manufacturer_Part_Number`,
@@ -38,9 +52,8 @@ Valgfrit: `pip install pypdf openpyxl xlrd` – bedre læsning af datablade, hur
    - **databladet**: PDF'en hentes og læses; pakken på bestillingslinjen for dit MPN
      (fx "NE555DR … SOIC-8") sammenlignes med footprintet
    - visuelt overlay: dine pads (orange) oven på referencen (blå stiplet)
-   - **sammenligningsvindue** (klik på footprintet i BOM-tabellen): footprintets mål med målestreger
-     ved siden af databladets pakketabel (pitch, benbredde, benspænd, fod, termisk pad, krop),
-     anbefalet land pattern og pinout symbol ↔ datablad – og selve databladet åbnet på tegningssiden
+   - footprintets mål ved siden af databladets pakketabel (pitch, benbredde, benspænd, fod, termisk pad,
+     krop), anbefalet land pattern og pinout symbol ↔ datablad – og databladet åbnet på tegningssiden
 4. **Grosist-BOM** – CSV/TSV/XLSX/XLS/HTML fra Mouser, DigiKey, LCSC, Farnell, TME … uden skabelon.
    Kolonner findes automatisk (også når der er titelrækker over), og linjer matches på MPN, grosist-nr.,
    reference (R1, C3) eller værdi + pakke. Viser manglende, forkerte antal og ekstra varer i kurven.

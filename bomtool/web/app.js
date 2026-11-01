@@ -6,7 +6,7 @@
   const KEEP_EXT = /\.(kicad_sch|kicad_pcb|kicad_pro|kicad_mod|kicad_sym)$|(^|\/)(fp-lib-table|sym-lib-table)$/i;
 
   const files = { project: [], dist: [], refs: [] };
-  let state = { job: null, result: null, tab: "bom", alts: {} };
+  let state = { job: null, result: null, tab: "bom", alts: {}, cmp: {}, choice: {}, sel: null };
 
   // ---------- settings ----------
   async function loadSettings() {
@@ -179,11 +179,11 @@
     $("#progMsg").textContent = j.msg || "";
     if (j.state === "running") return setTimeout(poll, 600);
     if (j.state === "error") return fail(j.error);
-    state.result = j.result; state.alts = {}; state.diff = null; state.cart = null;
+    state.result = j.result; state.alts = {}; state.cmp = {}; state.choice = {}; state.sel = null; state.diff = null; state.cart = null;
     $("#btnRun").disabled = false;
     showResult();
   }
-  $("#btnBack").onclick = () => { $("#resultView").classList.add("hidden"); $("#inputView").classList.remove("hidden"); $("#progress").classList.add("hidden"); loadHistory(); };
+  $("#btnBack").onclick = () => { document.querySelector("main").classList.remove("wide"); $("#resultView").classList.add("hidden"); $("#inputView").classList.remove("hidden"); $("#progress").classList.add("hidden"); loadHistory(); };
 
   // ---------- history ----------
   let historyList = [];
@@ -202,7 +202,7 @@
     if (o) {
       const res = await (await fetch("/api/history/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: o.dataset.hopen }) })).json();
       if (res.error) return alert(res.error);
-      state.job = res.job; state.result = res.result; state.alts = {}; state.diff = null; state.cart = null;
+      state.job = res.job; state.result = res.result; state.alts = {}; state.cmp = {}; state.choice = {}; state.sel = null; state.diff = null; state.cart = null;
       showResult();
     } else if (d) {
       if (!confirm("Slet denne analyse fra historikken?")) return;
@@ -219,6 +219,7 @@
     const r = state.result;
     $("#inputView").classList.add("hidden");
     $("#resultView").classList.remove("hidden");
+    document.querySelector("main").classList.add("wide");
     $("#rTitle").textContent = r.project.name || "Projekt";
     const v = r.project.version;
     $("#rSub").textContent = `KiCad-filversion: skematik ${v.sch || "–"} (${v.sch_generator || "?"}), PCB ${v.pcb || "–"} (${v.pcb_generator || "?"}) · ${r.settings.boards} print`;
@@ -243,6 +244,8 @@
     r.project.warnings.forEach(w => notes.push(["warn", w]));
     $("#notices").innerHTML = notes.map(([c, t]) => `<div class="notice ${c}">${esc(t)}</div>`).join("");
     renderTab();
+    const first = r.lines.find(l => l.status !== "ok") || r.lines[0];
+    if (first) select(first.id, true); else renderSide();
   }
 
   $("#tabs").addEventListener("click", e => {
@@ -262,6 +265,7 @@
   function renderTab() {
     const f = { bom: tabBom, fp: tabFp, dist: tabDist, buy: tabBuy, excl: tabExcl, diff: tabDiff }[state.tab];
     $("#tabBody").innerHTML = f();
+    if (state.sel) document.querySelectorAll(`#tabBody [data-line="${CSS.escape(state.sel)}"]`).forEach(e => e.classList.add("sel"));
   }
 
   function mpnCell(l) {
@@ -273,18 +277,22 @@
   }
 
   function tabBom() {
-    const rows = visibleLines().map(l => `<tr data-line="${esc(l.id)}">
-      <td>${pill(l.status)}</td>
+    const rows = visibleLines().map(l => {
+      const [ds, dsMsg] = dsStat(l), [bs, bsMsg] = buyStat(l), fs = fpStat(l);
+      return `<tr data-line="${esc(l.id)}">
       <td class="num">${l.qty}</td>
       <td class="refs">${esc(l.refs.join(", "))}</td>
-      <td>${esc(l.value)}${l.desc ? `<div class="sub">${esc(l.desc).slice(0, 80)}</div>` : ""}</td>
-      <td class="mono fpcell" data-fpcmp="${esc(l.id)}" title="Klik for at sammenligne footprintet med databladet">${esc(l.footprint.split(":").pop())}<div>${pill((l.fp || {}).status || "unknown")}</div></td>
-      <td>${mpnCell(l)}</td>
-      <td>${esc(l.mfr)}</td>
-      <td>${l.datasheet ? `<a href="${esc(l.datasheet)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">PDF</a>` : ""}</td>
-      <td>${l.warnings.length ? `<ul class="warnlist">${l.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}</td>
-    </tr>`).join("");
-    return `<div class="tbl-wrap"><table><thead><tr><th>Status</th><th class="num">Antal</th><th>Referencer</th><th>Værdi</th><th>Footprint</th><th>MPN</th><th>Producent</th><th>Datablad</th><th>Bemærkninger</th></tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">Ingen linjer</td></tr>`}</tbody></table></div>`;
+      <td>${esc(l.value)}${l.desc ? `<div class="sub">${esc(l.desc).slice(0, 60)}</div>` : ""}</td>
+      <td>${mpnCell(l)}${l.mfr ? `<div class="sub">${esc(l.mfr)}</div>` : ""}</td>
+      <td class="mono">${esc(l.footprint.split(":").pop())}</td>
+      <td class="ctrl">${ctrlPill(fs, STATUS_TXT[fs] || fs, "Symbol ↔ footprint")}</td>
+      <td class="ctrl">${ds === "none" ? `<span class="sub">–</span>` : ctrlPill(ds, STATUS_TXT[ds] || ds, dsMsg)}</td>
+      <td class="ctrl">${ctrlPill(bs, bs === "ok" ? "OK" : STATUS_TXT[bs] || bs, bsMsg)}${state.choice[l.id] ? `<div class="sub">alternativ</div>` : ""}</td>
+    </tr>`;
+    }).join("");
+    return `<div class="tbl-wrap"><table class="bom"><thead><tr><th class="num">Antal</th><th>Referencer</th><th>Værdi</th><th>MPN</th><th>Footprint</th>
+      <th title="Passer symbolet og footprintet sammen?">1 Footprint</th><th title="Passer footprintet med databladet?">2 Datablad</th><th title="Kan den købes som valgt?">3 Indkøb</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="8" class="empty">Ingen linjer</td></tr>`}</tbody></table></div>`;
   }
 
   function fpLegend(fp) {
@@ -303,10 +311,9 @@
         <div class="sub">${esc(l.mpn || l.value)}${fp.part_pkg ? " · pakke: " + esc(fp.part_pkg) : ""}</div>
         <div class="fp-svg">${renderFootprint(fp.geometry, fp.overlay && fp.overlay.ref_pads, { details: fp.overlay && fp.overlay.details })}</div>
         ${checksList(fp)}
-        <button class="btn small" data-fpcmp="${esc(l.id)}">Sammenlign med datablad</button>
       </div>`;
     }).join("");
-    return `<p class="hint">Orange = dine pads (fra PCB'en eller biblioteket). Blå stiplet = reference: producentens CAD-fil, IPC-7351-mønster eller KiCad-biblioteket. Klik for detaljer.</p><div class="fp-grid">${cards || `<div class="empty">Ingen footprints</div>`}</div>`;
+    return `<p class="hint">Orange = dine pads (fra PCB'en eller biblioteket). Blå stiplet = reference: producentens CAD-fil, IPC-7351-mønster eller KiCad-biblioteket. Klik på et kort for at se det i kontrolpanelet.</p><div class="fp-grid">${cards || `<div class="empty">Ingen footprints</div>`}</div>`;
   }
 
   function tabDist() {
@@ -396,8 +403,16 @@
   document.addEventListener("change", e => { if (e.target.id === "diffSel") loadDiff(e.target.value); });
 
   // ---------- carts ----------
+  // What will actually be bought for a line at a seller: a chosen alternative overrides the plan.
+  function buyFor(l, seller) {
+    const ch = state.choice[l.id];
+    if (ch) return seller === "*" || ch.seller === seller ? { sku: ch.sku, qty: ch.qty, seller: ch.seller, mpn: ch.mpn } : null;
+    if (!l.plan) return null;
+    const b = seller === "*" ? l.plan.best : l.plan.per_seller[seller];
+    return b ? { sku: b.sku, qty: b.qty, seller: b.seller, mpn: l.mpn || (l.suggested ? l.suggested[0].mpn : "") } : null;
+  }
   function cartItems(seller) {
-    return state.result.lines.map(l => ({ l, b: l.plan && l.plan.per_seller[seller] })).filter(x => x.b && x.b.sku);
+    return state.result.lines.map(l => ({ l, b: buyFor(l, seller) })).filter(x => x.b && x.b.sku);
   }
   function digikeyCart(seller) {
     // DigiKey FastAdd: a form POST opens their site with the parts in your cart (max ~400 per post).
@@ -447,19 +462,56 @@
       ${bad.length ? `<ul class="warnlist">${bad.map(x => `<li>${esc(x.sku)}: ${esc(x.errors.join(" "))}</li>`).join("")}</ul>` : ""}</div>`;
   }
 
-  // ---------- compare window (footprint <-> datasheet) ----------
-  $("#cmpClose").onclick = () => $("#cmp").close();
-  $("#cmp").addEventListener("click", e => {
-    if (e.target.id === "cmp") $("#cmp").close();
-    const pg = e.target.closest("[data-page]");
-    if (pg) showPage(pg.dataset.page);
-  });
+  // ---------- control panel (right side) ----------
+  // Three checks per BOM line: symbol <-> footprint, footprint <-> datasheet, and what you will buy.
+  const ORDER = { ok: 0, none: 0, unknown: 1, partial: 1, warn: 2, missing: 3, mismatch: 4 };
+  const worst = list => list.reduce((a, b) => (ORDER[b] ?? 1) > (ORDER[a] ?? 1) ? b : a, "ok");
+
+  function fpStat(l) {
+    const cs = ((l.fp || {}).checks || []).filter(c => c.check !== "Datablad");
+    return cs.length ? worst(cs.map(c => c.status)) : ((l.fp || {}).status || "unknown");
+  }
+  function dsStat(l) {
+    const c = ((l.fp || {}).checks || []).find(c => c.check === "Datablad");
+    if (c) return [c.status, c.msg];
+    if (l.kind) return ["none", "Passive komponenter kontrolleres mod MPN-mønstre og IPC-mål i trin 1, ikke mod databladet."];
+    return l.datasheet ? ["unknown", "Databladet er ikke læst."] : ["none", "Intet datablad-link."];
+  }
+  function buyStat(l) {
+    const r = state.result, ch = state.choice[l.id];
+    if (ch) return ["ok", `Alternativ valgt: ${ch.mpn}`];
+    const ds = r.dist_boms.map(d => d.results[l.id]).filter(Boolean);
+    if (ds.length) {
+      const st = worst(ds.map(m => m.status));
+      return [st, { ok: "Matcher kurven", missing: "Mangler i kurven" }[st] || "Afviger fra kurven"];
+    }
+    if (l.plan) {
+      const s = l.plan.best.stock;
+      if (s != null && s < l.need_spare) return [s ? "warn" : "mismatch", s ? `Kun ${s} på lager` : "Ikke på lager"];
+      if (l.warnings.some(w => /Livscyklus|NRND|udgået/i.test(w))) return ["warn", "Udgået / NRND"];
+      return ["ok", `${l.plan.best.seller} · ${money(l.plan.best.total)}`];
+    }
+    if (r.providers.length && (l.mpn || l.mpn_guess)) return ["mismatch", "Ikke fundet hos grosisterne"];
+    return ["unknown", r.providers.length ? "Intet MPN at købe efter" : "Ingen indkøbsdata (API-nøgle eller grosist-BOM)"];
+  }
+  const needsAlt = l => state.result.providers.length && !state.choice[l.id] && ["warn", "mismatch", "missing"].includes(buyStat(l)[0]);
+  const ctrlPill = (st, label, tip) => `<span class="pill ${st === "none" ? "unknown" : esc(st)}" title="${esc(tip || "")}">${esc(label)}</span>`;
+
+  function select(id, scroll) {
+    state.sel = id;
+    document.querySelectorAll("[data-line].sel").forEach(e => e.classList.remove("sel"));
+    document.querySelectorAll(`[data-line="${CSS.escape(id)}"]`).forEach(e => {
+      e.classList.add("sel");
+      if (scroll) e.scrollIntoView({ block: "nearest" });
+    });
+    renderSide();
+  }
 
   function padBox(p) {
     const a = ((p.angle || 0) % 180) * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
     return [(p.w * c + p.h * s) / 2, (p.w * s + p.h * c) / 2];
   }
-  // Dimension lines for the drawing: row span, gap between rows, pitch and pad size.
+  // Dimension lines for the drawing: row span, gap between rows and pitch.
   function dimLines(geo, f) {
     if (!geo || !geo.pads || !f || !f.rows) return [];
     const out = [];
@@ -474,7 +526,6 @@
       if (inRow.length < 2) continue;
       const lo = Math.min(...inRow.map(p => (X ? p.x : p.y) - padBox(p)[X ? 0 : 1]));
       const hi = Math.max(...inRow.map(p => (X ? p.x : p.y) + padBox(p)[X ? 0 : 1]));
-      const across = inRow.map(p => (X ? p.y : p.x));
       const aMax = Math.max(...inRow.map(p => (X ? p.y + padBox(p)[1] : p.x + padBox(p)[0])));
       const aMin = Math.min(...inRow.map(p => (X ? p.y - padBox(p)[1] : p.x - padBox(p)[0])));
       const off = (hi - lo) * 0.12 + 0.3;
@@ -487,7 +538,6 @@
         if (X) out.push({ x1: a, y1: aMin - off, x2: b, y2: aMin - off, text: `${r.inner} mm`, side: "above" });
         else out.push({ x1: aMin - off, y1: a, x2: aMin - off, y2: b, text: `${r.inner} mm`, side: "left" });
       }
-      // pitch between pin 1 (or the first pad of the row) and its neighbour
       const p1 = inRow.find(p => p.num === "1") || inRow[0];
       const nb = inRow.filter(q => q !== p1 && Math.abs((X ? q.x : q.y) - (X ? p1.x : p1.y)) < 0.05)
         .sort((q1, q2) => Math.abs((X ? q1.y : q1.x) - (X ? p1.y : p1.x)) - Math.abs((X ? q2.y : q2.x) - (X ? p1.y : p1.x)))[0];
@@ -496,161 +546,189 @@
         if (X) out.push({ x1: edge, y1: p1.y, x2: edge, y2: nb.y, text: `${f.pitch}`, side: "left" });
         else out.push({ x1: p1.x, y1: edge, x2: nb.x, y2: edge, text: `${f.pitch}`, side: "above" });
       }
-      break; // one row direction is enough to read
+      break;
     }
     return out;
   }
 
-  let cmpState = null;
-  function showPage(p) {
-    if (!cmpState) return;
-    const src = `/api/datasheet/${encodeURIComponent(state.job)}/${encodeURIComponent(cmpState.id)}?p=${p}#page=${p}`;
-    $("#cmpPdf").src = src;
-    document.querySelectorAll("#cmp [data-page]").forEach(b => b.classList.toggle("primary", b.dataset.page === String(p)));
+  const mm = v => v == null ? "–" : `${v} mm`;
+  const cmpTable = rows => `<div class="tbl-wrap"><table class="tight"><thead><tr><th>Mål</th><th class="num">Datablad</th><th class="num">Footprint</th><th></th></tr></thead><tbody>${rows.map(r => `<tr title="${esc(r.note)}"><td>${esc(r.what)}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}</td><td class="num">${esc(r.ds)}</td><td class="num">${esc(r.fp)}</td><td>${pill(r.status)}</td></tr>`).join("")}</tbody></table></div>`;
+  const pageBtn = (p, label) => `<button class="btn small" data-page="${p}">${esc(label || "side " + p)}</button>`;
+
+  function sideCompare(l) {
+    const res = state.cmp[l.id];
+    if (!res) return `<p class="hint">Læser databladet og måler footprintet …</p>`;
+    if (res.error) return `<div class="notice bad">${esc(res.error)}</div>`;
+    let h = "";
+    if (res.dims) {
+      h += `<h4>Pakkemål: ${esc(res.dims.name)} ${pageBtn(res.dims.page)}</h4>
+        ${res.dims.sure ? "" : `<p class="hint" style="color:var(--warn)">Tabellen kunne ikke knyttes sikkert til footprintets pakke.</p>`}
+        ${cmpTable(res.dims.rows)}
+        <details><summary class="hint">Hele mål-tabellen</summary><p class="mono hint">${Object.entries(res.dims.table).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(" · ")}</p></details>`;
+    }
+    if (res.land) {
+      h += `<h4>Anbefalet land pattern ${esc(res.land.label)} ${pageBtn(res.land.page)}</h4>
+        <p class="hint">Bogstaverne betyder forskelligt hos hver producent – værdier der findes i dit footprint er markeret.</p>${cmpTable(res.land.rows)}`;
+    }
+    if (res.pins) {
+      h += `<h4>Pinout: symbol ↔ datablad ${pill(res.pins.status)} ${pageBtn(res.pins.page)}</h4><p class="hint">${esc(res.pins.summary)}</p>
+        <div class="tbl-wrap"><table class="tight"><thead><tr><th class="num">Ben</th><th>Symbol</th><th>Datablad</th><th></th></tr></thead><tbody>
+        ${res.pins.rows.map(r => `<tr><td class="num">${esc(r.num)}</td><td class="mono">${esc(r.symbol)}</td><td class="mono">${esc(r.datasheet)}</td><td>${pill(r.status, r.status === "unknown" ? "Ikke fundet" : null)}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+    h += res.notes.map(n => `<div class="notice info">${esc(n)}</div>`).join("");
+    const pages = res.pages || [];
+    if (res.datasheet && res.datasheet.startsWith("http") && !res.notes.some(n => /webside|hente/.test(n))) {
+      h += `<div class="row" style="margin-top:10px"><span class="sub">Tegningen i databladet:</span>${pages.map(p => pageBtn(p)).join("")}
+        ${pages.length ? "" : pageBtn(1, "side 1")}<a class="btn small ghost" href="${esc(res.datasheet)}" target="_blank" rel="noopener">Åbn PDF</a></div>
+        <div id="sidePdfWrap" class="hidden"><iframe id="sidePdf" title="Datablad"></iframe></div>`;
+    }
+    return h;
   }
 
-  async function openCompare(id) {
-    const l = state.result.lines.find(x => x.id === id);
-    if (!l) return;
-    cmpState = { id };
+  function sideBuy(l) {
+    const r = state.result, p = l.plan, ch = state.choice[l.id];
+    let h = `<p class="hint">Behov ${l.need} stk.${l.need_spare > l.need ? ` + ${l.need_spare - l.need} reserve` : ""} (${l.qty} pr. print × ${r.settings.boards} print).</p>`;
+    if (ch) h += `<div class="notice info">Du har valgt <b class="mono">${esc(ch.mpn)}</b> (${esc(ch.mfr)}) hos ${esc(ch.seller)}: ${ch.qty} stk. for ${money(ch.price, ch.currency)}.
+      Det ændrer indkøbslisten og kurven – ikke KiCad-projektet. <button class="btn small" data-unchoose="${esc(l.id)}">Fortryd</button></div>`;
+    const dists = r.dist_boms.map(d => {
+      const m = d.results[l.id];
+      return m ? `<li>${pill(m.status, m.status === "missing" ? "Mangler" : null)} <span><b>${esc(d.distributor)}-kurv</b>: ${esc([m.how ? "fundet via " + m.how : "", ...(m.issues || []), m.qty_msg || ""].filter(Boolean).join(" · ") || "ikke i kurven")}</span></li>` : "";
+    }).join("");
+    if (dists) h += `<ul class="checks">${dists}</ul>`;
+    if (p) {
+      h += `<div class="tbl-wrap" style="margin-top:8px"><table class="tight"><thead><tr><th>Sælger</th><th class="num">Køb</th><th class="num">Pris</th><th class="num">Lager</th></tr></thead><tbody>
+        ${Object.values(p.per_seller).sort((a, b) => a.total - b.total).map(b => `<tr><td>${esc(b.seller)}<div class="sub mono">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.sku)}</a>` : esc(b.sku)} ${esc(b.packaging || "")}</div></td>
+        <td class="num">${b.qty}</td><td class="num">${money(b.total, b.currency)}<div class="sub">${money(b.unit)}/stk.</div></td>
+        <td class="num ${b.stock != null && b.stock < l.need_spare ? "bad-text" : ""}">${b.stock ?? "–"}</td></tr>`).join("")}</tbody></table></div>
+        ${p.best.suggestions.map(s => `<div class="sugg ${s.kind}">${esc(s.text)}</div>`).join("")}`;
+    } else if (!dists) {
+      h += `<p class="hint">${r.providers.length ? "Ingen tilbud fundet." : "Tilføj en API-nøgle under Indstillinger, eller upload en grosist-BOM, for at se priser og lager."}</p>`;
+    }
+    const apiRows = (l.api || []).filter(a => a.lifecycle);
+    if (apiRows.length) h += `<p class="hint">Livscyklus: ${apiRows.map(a => `${esc(a.source)}: ${esc(a.lifecycle)}`).join(" · ")}</p>`;
+    return h;
+  }
+
+  function sideAlts(l) {
+    const res = state.alts[l.id];
+    if (res === "loading") return `<p class="hint">Søger alternativer … (grosisternes rate limits kan gøre det lidt langsomt)</p>`;
+    if (res && res.error) return `<div class="notice bad">${esc(res.error)}</div>`;
+    if (!res) {
+      if (!state.result.providers.length) return `<p class="hint">Alternativer kræver mindst én grosist-API-nøgle (Indstillinger).</p>`;
+      return `<button class="btn small" data-alt="${esc(l.id)}">Find alternativer</button> <span class="sub">${l.kind ? "Samme værdi og pakke, mindst lige gode specs." : "Grosisternes egne erstatninger, tjekket for pakke og pinout."}</span>`;
+    }
+    if (!res.items.length) return `<p class="hint">${esc(res.note)}</p>`;
+    const ch = state.choice[l.id];
+    return `<p class="hint">${esc(res.note)}</p>` + res.items.map((it, i) => `<div class="alt ${ch && ch.mpn === it.mpn ? "chosen" : ""}">
+      <div class="alt-head"><span class="mono"><b>${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.mpn)}</a>` : esc(it.mpn)}</b></span> <span class="sub">${esc(it.mfr)}</span>
+        ${it.sku && it.price != null ? `<button class="btn small ${ch && ch.mpn === it.mpn ? "primary" : ""}" data-choose="${esc(l.id)}" data-i="${i}">${ch && ch.mpn === it.mpn ? "Valgt" : "Vælg"}</button>` : ""}</div>
+      <div class="sub">${esc((it.desc || "").slice(0, 110))}</div>
+      <div class="row" style="margin-top:4px">
+        ${it.fit ? pill({ ok: "ok", partial: "partial", mismatch: "mismatch" }[it.fit] || "unknown", { ok: "Passer på footprint", partial: "Footprint: måske", mismatch: "Passer ikke på footprint", unknown: "Footprint: ukendt" }[it.fit]) : ""}
+        ${it.pinout ? pill(it.pinout.status, { ok: "Samme pinout", warn: "Pinout delvist", mismatch: "Anden pinout" }[it.pinout.status]) : ""}
+        ${it.same_seller ? `<span class="pill ok">samme grosist</span>` : ""}
+        <span class="sub">${esc(it.seller || it.source || "")}${it.price != null ? ` · ${it.qty} stk. ${money(it.price, it.currency)}` : ""}${it.stock != null ? ` · lager ${it.stock}` : ""}</span>
+        ${it.datasheet ? `<a class="sub" href="${esc(it.datasheet)}" target="_blank" rel="noopener">datablad</a>` : ""}</div>
+      ${it.check ? `<div class="sub" style="color:var(--warn)">${esc(it.check)}</div>` : ""}
+      ${it.pinout && it.pinout.status !== "ok" ? `<div class="sub" style="color:var(--warn)">${esc(it.pinout.msg)}</div>` : ""}</div>`).join("");
+  }
+
+  function renderSide() {
+    const side = $("#side");
+    const l = state.result && state.result.lines.find(x => x.id === state.sel);
+    if (!l) { side.innerHTML = `<div class="empty">Vælg en komponent i tabellen for at kontrollere den.<div class="sub">Pil op/ned skifter komponent.</div></div>`; return; }
     const fp = l.fp || {};
-    const head = `<div class="cmp-head"><h1>${esc(l.refs.join(", "))} – ${esc(l.mpn || l.value)}</h1>
-      <p class="hint mono">${esc(l.footprint)} ${pill(fp.status || "unknown")}</p></div>`;
-    $("#cmpBody").innerHTML = head + `<p class="hint">Læser databladet og måler footprintet …</p>`;
-    $("#cmp").showModal();
+    const [ds, dsMsg] = dsStat(l), [bs, bsMsg] = buyStat(l);
+    if (!(l.id in state.cmp)) loadCompare(l.id);
+    if (needsAlt(l) && !state.alts[l.id]) loadAlternatives(l.id);
+    const cmp = state.cmp[l.id];
+    const dims = cmp && cmp.features ? dimLines(fp.geometry, cmp.features) : undefined;
+    const f = cmp && cmp.features;
+    side.innerHTML = `
+      <div class="side-head">
+        <h2>${esc(l.refs.join(", "))}</h2>
+        <div>${l.value && l.value !== "~" && l.value !== l.mpn ? `<b>${esc(l.value)}</b> · ` : ""}${mpnCell(l)} ${l.mfr ? `<span class="sub">${esc(l.mfr)}</span>` : ""}</div>
+        <div class="sub mono">${esc(l.footprint)}</div>
+        <div class="row" style="margin-top:6px">${ctrlPill(fpStat(l), "1 Footprint", "Symbol ↔ footprint")}${ctrlPill(ds, "2 Datablad", dsMsg)}${ctrlPill(bs, "3 Indkøb", bsMsg)}</div>
+        ${l.warnings.length ? `<ul class="warnlist">${l.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+        ${l.suggested_note ? `<div class="notice info">${esc(l.suggested_note)}</div>` : ""}
+      </div>
+      <section class="step"><h3><span class="n">1</span>Komponent ↔ footprint ${pill(fpStat(l))}</h3>
+        <div class="fp-svg big">${renderFootprint(fp.geometry, fp.overlay && fp.overlay.ref_pads, { details: fp.overlay && fp.overlay.details, dims })}</div>
+        ${fpLegend(fp)}
+        ${f ? `<p class="sub">Pitch ${mm(f.pitch)} · pad ${f.pad_w ? `${f.pad_w} × ${f.pad_l} mm` : "–"}${Object.values(f.rows).map(r => ` · yder/inder ${r.outer}/${r.inner ?? "–"} mm`).join("")}${f.ep ? ` · termisk pad ${f.ep[0]} × ${f.ep[1]} mm` : ""}${f.body ? ` · krop ${f.body[0]} × ${f.body[1]} mm` : ""}</p>` : ""}
+        <ul class="checks">${(fp.checks || []).filter(c => c.check !== "Datablad").map(c => `<li>${pill(c.status)}<span><b>${esc(c.check)}</b><br>${esc(c.msg)}</span></li>`).join("")}</ul>
+      </section>
+      <section class="step"><h3><span class="n">2</span>Footprint ↔ datablad ${ctrlPill(ds, STATUS_TXT[ds] || "–", dsMsg)}</h3>
+        <p class="hint">${esc(dsMsg)}</p>${sideCompare(l)}</section>
+      <section class="step"><h3><span class="n">3</span>Indkøb ${ctrlPill(bs, bsMsg)}</h3>${sideBuy(l)}</section>
+      <section class="step"><h3><span class="n">4</span>Alternativer</h3>${sideAlts(l)}</section>`;
+  }
+
+  async function loadCompare(id) {
+    state.cmp[id] = null;
     let res;
     try {
       res = await (await fetch("/api/fpcompare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: state.job, line: id }) })).json();
-      if (res.error) throw new Error(res.error);
-    } catch (e) { $("#cmpBody").innerHTML = head + `<div class="notice bad">${esc(e.message)}</div>`; return; }
-    if (cmpState.id !== id) return;
-    const f = res.features;
-    const mm = v => v == null ? "–" : `${v} mm`;
-    const meas = [
-      ["Pads", f.pads], ["Pitch", mm(f.pitch)], ["Pad (bredde × længde)", f.pad_w ? `${f.pad_w} × ${f.pad_l} mm` : "–"],
-      ...Object.entries(f.rows).map(([ax, r]) => [`Rækker (${ax === "x" ? "vandret" : "lodret"}): yder / inder`, `${r.outer} / ${r.inner ?? "–"} mm`]),
-      ["Termisk pad", f.ep ? `${f.ep[0]} × ${f.ep[1]} mm` : "–"], ["Krop (Fab-lag)", f.body ? `${f.body[0]} × ${f.body[1]} mm` : "–"],
-    ];
-    const rowsTbl = (rows, cols) => `<div class="tbl-wrap"><table><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}<th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.what)}</td><td class="num">${esc(r.ds)}</td><td class="num">${esc(r.fp)}</td><td>${pill(r.status)}</td><td class="note">${esc(r.note)}</td></tr>`).join("")}</tbody></table></div>`;
-    const pageBtn = p => `<button class="btn small" data-page="${p}">side ${p}</button>`;
-    let right = "";
-    if (res.dims) {
-      right += `<div class="section"><h3>Pakkemål fra databladet: ${esc(res.dims.name)} ${pageBtn(res.dims.page)}</h3>
-        ${res.dims.sure ? "" : `<p class="hint" style="color:var(--warn)">Tabellen kunne ikke knyttes sikkert til footprintets pakke.</p>`}
-        ${rowsTbl(res.dims.rows, ["Mål", "Datablad (mm)", "Footprint (mm)"])}
-        <details><summary class="hint">Hele tabellen</summary><p class="mono hint">${Object.entries(res.dims.table).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(" · ")}</p></details></div>`;
-    }
-    if (res.land) {
-      right += `<div class="section"><h3>Anbefalet land pattern ${esc(res.land.label)} ${pageBtn(res.land.page)}</h3>
-        <p class="hint">Bogstaverne betyder forskelligt hos hver producent – se tegningen. Værdier der findes i dit footprint er markeret.</p>
-        ${rowsTbl(res.land.rows, ["Mål", "Datablad (mm)", "Footprint (mm)"])}</div>`;
-    }
-    if (res.pins) {
-      right += `<div class="section"><h3>Pinout: symbol ↔ datablad ${pill(res.pins.status)} ${pageBtn(res.pins.page)}</h3><p class="hint">${esc(res.pins.summary)}</p>
-        <div class="tbl-wrap"><table><thead><tr><th class="num">Ben</th><th>Symbol</th><th>Datablad</th><th>Status</th></tr></thead><tbody>
-        ${res.pins.rows.map(r => `<tr><td class="num">${esc(r.num)}</td><td class="mono">${esc(r.symbol)}</td><td class="mono">${esc(r.datasheet)}</td><td>${pill(r.status, r.status === "unknown" ? "Ikke fundet" : null)}</td></tr>`).join("")}</tbody></table></div></div>`;
-    }
-    right += res.notes.map(n => `<div class="notice info">${esc(n)}</div>`).join("");
-    if (!res.dims && !res.land && !res.pins && !res.notes.length) right += `<div class="notice info">Intet at sammenligne fra databladet.</div>`;
-    const pages = res.pages || [];
-    const pdf = res.datasheet && res.datasheet.startsWith("http") && !res.notes.some(n => /webside|hente/.test(n)) ? `<div class="section cmp-pdf"><h3>Databladet ${pages.map(pageBtn).join(" ")}
-        <a class="btn small ghost" href="${esc(res.datasheet)}" target="_blank" rel="noopener">Åbn original</a></h3>
-        <iframe id="cmpPdf" title="Datablad"></iframe></div>` : "";
-    $("#cmpBody").innerHTML = head + `<div class="cmp-grid">
-      <div class="cmp-fp"><div class="fp-svg">${renderFootprint(fp.geometry, null, { dims: dimLines(fp.geometry, f) })}</div>
-        <dl class="kv cmp-meas">${meas.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
-        <p class="hint">Footprintets pakke: ${esc(res.fp_pkg || "–")}</p></div>
-      <div>${right}</div></div>${pdf}`;
-    if (pdf) showPage(pages[0] || 1);
+    } catch (e) { res = { error: e.message }; }
+    state.cmp[id] = res;
+    if (state.sel === id) renderSide();
+  }
+  async function loadAlternatives(id) {
+    state.alts[id] = "loading";
+    if (state.sel === id) renderSide();
+    let res;
+    try {
+      res = await (await fetch("/api/alternatives", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: state.job, line: id }) })).json();
+    } catch (e) { res = { error: e.message }; }
+    state.alts[id] = res;
+    if (state.sel === id) renderSide();
+  }
+  function showPage(p) {
+    const wrap = $("#sidePdfWrap");
+    if (!wrap) return;
+    wrap.classList.remove("hidden");
+    $("#sidePdf").src = `/api/datasheet/${encodeURIComponent(state.job)}/${encodeURIComponent(state.sel)}?p=${p}#page=${p}`;
+    document.querySelectorAll("#side [data-page]").forEach(b => b.classList.toggle("primary", b.dataset.page === String(p)));
+  }
+  function refreshRow(id) {
+    // Re-render the table so the control columns follow a new choice.
+    renderTab();
+    select(id);
   }
 
-  // ---------- detail drawer ----------
   document.addEventListener("click", e => {
     const exp = e.target.closest("[data-export]");
     if (exp) { exportOrder(exp.dataset.export); return; }
-    const cmp = e.target.closest("[data-fpcmp]");
-    if (cmp) { e.preventDefault(); openCompare(cmp.dataset.fpcmp); return; }
     const dk = e.target.closest("[data-dkcart]");
     if (dk) { digikeyCart(dk.dataset.dkcart); return; }
     const mo = e.target.closest("[data-mocart]");
     if (mo) { mouserCart(mo.dataset.mocart); return; }
+    const pg = e.target.closest("#side [data-page]");
+    if (pg) { showPage(pg.dataset.page); return; }
     const altBtn = e.target.closest("[data-alt]");
     if (altBtn) { loadAlternatives(altBtn.dataset.alt); return; }
+    const choose = e.target.closest("[data-choose]");
+    if (choose) {
+      const id = choose.dataset.choose, it = state.alts[id].items[+choose.dataset.i];
+      state.choice[id] = it;
+      refreshRow(id);
+      return;
+    }
+    const un = e.target.closest("[data-unchoose]");
+    if (un) { delete state.choice[un.dataset.unchoose]; refreshRow(un.dataset.unchoose); return; }
     const row = e.target.closest("[data-line]");
-    if (row && !e.target.closest("a")) openLine(row.dataset.line);
+    if (row && !e.target.closest("a") && !row.closest("#side")) select(row.dataset.line);
   });
-  $("#drawerClose").onclick = () => $("#drawer").classList.add("hidden");
-  $("#drawer").addEventListener("click", e => { if (e.target.id === "drawer") $("#drawer").classList.add("hidden"); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#drawer").classList.add("hidden"); });
-
-  function openLine(id) {
-    const l = state.result.lines.find(x => x.id === id);
-    if (!l) return;
-    const fp = l.fp || {};
-    const kv = (k, v) => v ? `<dt>${esc(k)}</dt><dd>${v}</dd>` : "";
-    const apiRows = (l.api || []).map(a => `<tr><td>${esc(a.source)}</td><td class="mono">${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.mpn)}</a>` : esc(a.mpn)}</td><td>${esc(a.package)}</td><td class="num">${a.stock ?? ""}</td><td>${esc(a.lifecycle)}</td></tr>`).join("");
-    const p = l.plan;
-    const dists = state.result.dist_boms.map(d => {
-      const m = d.results[l.id];
-      if (!m) return "";
-      return `<li>${pill(m.status, m.status === "missing" ? "Mangler" : null)} <span><b>${esc(d.distributor)}</b>: ${esc([m.how ? "match via " + m.how : "", ...(m.issues || []), m.qty_msg || ""].filter(Boolean).join(" · "))}</span></li>`;
-    }).join("");
-    $("#drawerBody").innerHTML = `
-      <h1>${esc(l.refs.join(", "))}</h1>
-      <p class="hint">${pill(l.status)} ${l.qty} stk. pr. print · behov ${l.need}${l.need_spare > l.need ? ` + ${l.need_spare - l.need} reserve` : ""}</p>
-      <dl class="kv">
-        ${kv("Værdi", esc(l.value))}
-        ${kv("MPN", mpnCell(l))}
-        ${kv("Producent", esc(l.mfr))}
-        ${kv("Beskrivelse", esc(l.desc))}
-        ${kv("Footprint", `<a href="#" class="mono" data-fpcmp="${esc(l.id)}" title="Sammenlign med databladet">${esc(l.footprint)}</a>`)}
-        ${kv("Pakke (footprint)", esc(fp.footprint_pkg))}
-        ${kv("Pakke (komponent)", esc(fp.part_pkg))}
-        ${kv("Datablad", l.datasheet ? `<a href="${esc(l.datasheet)}" target="_blank" rel="noopener">${esc(l.datasheet)}</a>` : "")}
-        ${kv("Grosist-varenr.", esc(Object.entries(l.dist).map(([k, v]) => k + ": " + v).join(", ")))}
-      </dl>
-      ${l.warnings.length ? `<ul class="warnlist">${l.warnings.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
-      ${l.suggested_note ? `<div class="notice info" style="margin-top:10px">${esc(l.suggested_note)}</div>` : ""}
-      <div class="section"><h3>Footprint-kontrol ${pill(fp.status || "unknown")}</h3>
-        <div class="fp-svg">${renderFootprint(fp.geometry, fp.overlay && fp.overlay.ref_pads, { details: fp.overlay && fp.overlay.details })}</div>
-        ${fpLegend(fp)}
-        ${checksList(fp)}
-        ${fp.overlay && fp.overlay.details && fp.overlay.details.length ? `<table style="margin-top:8px"><thead><tr><th>Pad</th><th class="num">Forskydning</th><th class="num">Størrelsesforskel</th><th>Din (b×h)</th><th>Reference</th></tr></thead><tbody>${fp.overlay.details.map(d => `<tr><td>${esc(d.pad)}</td><td class="num">${d.offset} mm</td><td class="num">${d.size_diff} mm</td><td>${d.a.join(" × ")}</td><td>${d.b.join(" × ")}</td></tr>`).join("")}</tbody></table>` : ""}
-        ${!fp.overlay || !/producent/.test(fp.overlay.ref_label || "") ? `<p class="hint" style="margin-top:8px">Tip: upload producentens .kicad_mod (fx fra SnapEDA/Ultra Librarian/SamacSys) navngivet efter MPN'et for at få en sammenligning pad for pad.</p>` : ""}
-      </div>
-      ${dists ? `<div class="section"><h3>Grosist-BOM</h3><ul class="checks">${dists}</ul></div>` : ""}
-      ${apiRows ? `<div class="section"><h3>Grosist-data</h3><div class="tbl-wrap"><table><thead><tr><th>Kilde</th><th>MPN</th><th>Pakke</th><th class="num">Lager</th><th>Status</th></tr></thead><tbody>${apiRows}</tbody></table></div></div>` : ""}
-      ${p ? `<div class="section"><h3>Indkøb</h3><div class="tbl-wrap"><table><thead><tr><th>Sælger</th><th>Varenr.</th><th>Pakning</th><th class="num">Køb</th><th class="num">Stykpris</th><th class="num">I alt</th><th class="num">Lager</th></tr></thead><tbody>
-        ${Object.values(p.per_seller).sort((a, b) => a.total - b.total).map(b => `<tr><td>${esc(b.seller)}</td><td class="mono">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.sku)}</a>` : esc(b.sku)}</td><td>${esc(b.packaging)}</td><td class="num">${b.qty}</td><td class="num">${money(b.unit)}</td><td class="num">${money(b.total, b.currency)}</td><td class="num">${b.stock ?? ""}</td></tr>`).join("")}
-        </tbody></table></div>${p.best.suggestions.map(s => `<div class="sugg ${s.kind}">${esc(s.text)}</div>`).join("")}</div>` : ""}
-      <div class="section"><h3>Alternative komponenter</h3><div id="altBox">${state.alts[l.id] ? renderAlts(state.alts[l.id]) : `<button class="btn" data-alt="${esc(l.id)}">Find alternativer</button> <span class="sub">${l.kind ? "Søger efter samme værdi, pakke og mindst lige gode specs." : "Bruger grosisternes egne erstatnings-data."}</span>`}</div></div>`;
-    $("#drawer").classList.remove("hidden");
-    $("#drawer .drawer-panel").scrollTop = 0;
-  }
-
-  async function loadAlternatives(id) {
-    $("#altBox").innerHTML = `<span class="sub">Søger … (kan tage lidt tid pga. grosisternes rate limits)</span>`;
-    try {
-      const res = await (await fetch("/api/alternatives", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: state.job, line: id }) })).json();
-      if (res.error) throw new Error(res.error);
-      state.alts[id] = res;
-      $("#altBox").innerHTML = renderAlts(res);
-    } catch (e) { $("#altBox").innerHTML = `<span class="bad-text">${esc(e.message)}</span>`; }
-  }
-
-  function renderAlts(res) {
-    if (!res.items.length) return `<p class="hint">${esc(res.note)}</p>`;
-    const rows = res.items.map(it => `<tr>
-      <td class="mono">${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.mpn)}</a>` : esc(it.mpn)}<div class="sub">${esc(it.mfr)}</div></td>
-      <td>${esc(it.desc).slice(0, 90)}${it.relation ? `<div class="sub">${esc(it.relation)}</div>` : ""}${it.check ? `<div class="sub" style="color:var(--warn)">${esc(it.check)}</div>` : ""}</td>
-      <td>${esc(it.package || "")}${it.fit ? `<div>${pill({ ok: "ok", partial: "partial", mismatch: "mismatch" }[it.fit] || "unknown", { ok: "Passer", partial: "Måske", mismatch: "Passer ikke", unknown: "Ukendt" }[it.fit])}</div>` : ""}${it.pinout ? `<div>${pill(it.pinout.status, { ok: "Samme pinout", warn: "Pinout delvist", mismatch: "Anden pinout" }[it.pinout.status])}</div><div class="sub">${esc(it.pinout.msg)}</div>` : (it.fit ? `<div class="sub">Pinout ikke tjekket</div>` : "")}</td>
-      <td>${esc(it.seller || it.source || "")}${it.same_seller ? ` <span class="pill ok">samme sted</span>` : ""}</td>
-      <td class="num">${it.price != null ? money(it.price, it.currency) + `<div class="sub">${it.qty} stk.</div>` : "–"}</td>
-      <td class="num">${it.stock ?? ""}</td>
-      <td>${it.datasheet ? `<a href="${esc(it.datasheet)}" target="_blank" rel="noopener">PDF</a>` : ""}</td></tr>`).join("");
-    return `<p class="hint">${esc(res.note)}${res.preferred ? ` · Din nuværende grosist: ${esc(res.preferred)}` : ""}</p>
-      <div class="tbl-wrap"><table><thead><tr><th>MPN</th><th>Beskrivelse</th><th>Pakke</th><th>Sælger</th><th class="num">Pris for behov</th><th class="num">Lager</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
-  }
+  document.addEventListener("keydown", e => {
+    if (!state.result || $("#resultView").classList.contains("hidden")) return;
+    if (!["ArrowDown", "ArrowUp"].includes(e.key) || (e.target.closest && e.target.closest("input, select, textarea, dialog"))) return;
+    const ids = [...new Set([...document.querySelectorAll("#tabBody [data-line]")].map(x => x.dataset.line))];
+    if (!ids.length) return;
+    e.preventDefault();
+    const i = ids.indexOf(state.sel);
+    select(ids[Math.max(0, Math.min(ids.length - 1, i < 0 ? 0 : i + (e.key === "ArrowDown" ? 1 : -1)))], true);
+  });
 
   // ---------- export ----------
   function csv(rows) {
@@ -677,10 +755,8 @@
     // Column names that Mouser's and DigiKey's BOM upload tools recognise.
     const rows = [["Manufacturer Part Number", "Distributor Part Number", "Quantity", "Customer Reference", "Seller"]];
     for (const l of r.lines) {
-      if (!l.plan) continue;
-      const b = seller === "*" ? l.plan.best : l.plan.per_seller[seller];
-      if (!b) continue;
-      rows.push([l.mpn || (l.suggested ? l.suggested[0].mpn : ""), b.sku, b.qty, l.refs.join(","), b.seller]);
+      const b = buyFor(l, seller);
+      if (b) rows.push([b.mpn, b.sku, b.qty, l.refs.join(","), b.seller]);
     }
     download(`${r.project.name || "bom"}_indkob_${seller === "*" ? "mix" : seller.replace(/\W+/g, "_")}.csv`, csv(rows));
   }
