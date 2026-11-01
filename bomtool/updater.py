@@ -89,7 +89,10 @@ def install():
     except OSError:
         os.replace(old, exe)      # put the old one back
         raise
-    subprocess.Popen([exe] + sys.argv[1:], close_fds=True,
+    # Without this the new .exe inherits PyInstaller's variables and tries to run
+    # from the old version's (soon deleted) unpack folder instead of starting fresh.
+    env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+    subprocess.Popen([exe] + sys.argv[1:], close_fds=True, env=env,
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
     return f"Opdateret til {info['latest']} – starter igen."
 
