@@ -212,13 +212,24 @@ def _nk(s):
 
 # ---- symbol pins vs pads --------------------------------------------------------
 
-def pins_vs_pads(pins, geo):
+def pins_vs_pads(pins, geo, names=None):
     if not pins:
         return None
     pads = {p["num"] for p in _numbered(geo["pads"])}
     pins = set(pins)
     missing = sorted(pins - pads, key=_nk)
     extra = sorted(pads - pins, key=_nk)
+    names = names or {}
+    # Pins with the same name as a pin that has a pad (MOSFET drain 5-8 on one pad, USB-C VBUS/GND pairs)
+    # are one connection - the footprint simply merges them.
+    present = {names[p].upper() for p in pins & pads if names.get(p)}
+    merged = [m for m in missing if names.get(m) and names[m].upper() in present]
+    if missing and len(merged) == len(missing):
+        groups = sorted({names[m] for m in merged})
+        return {"check": "Symbol-ben ↔ pads", "status": "ok",
+                "msg": f"Ben {', '.join(merged[:10])} ({', '.join(groups)}) har ingen egen pad, men deler navn med et ben "
+                       "der har – footprintet har slået dem sammen til én pad (samme forbindelse)."}
+    missing = [m for m in missing if m not in merged]
     if missing:
         return {"check": "Symbol-ben ↔ pads", "status": "mismatch",
                 "msg": f"Symbolet har ben {', '.join(missing[:10])} som ikke findes som pad i footprintet – "
@@ -280,7 +291,10 @@ def report(comp, part_pkg_text=None, part_pkg_source="", reference=None, referen
         if fp_pkg["pins"] and fp_pkg["family"] != "CHIP":
             pc = meas["pins"]
             # +1 is nearly always an exposed pad or tab that the name doesn't count.
-            if pc != fp_pkg["pins"] and pc != fp_pkg["pins"] + 1 and fp_pkg["family"] != "SOT-223":
+            nums = [int(n) for n in {p["num"] for p in _numbered(geo["pads"])} if n.isdigit()]
+            # Packages that leave a lead out (optocouplers in "SO6" with pin 2 missing) number up to the full count.
+            skipped = pc < fp_pkg["pins"] and nums and max(nums) == fp_pkg["pins"]
+            if pc != fp_pkg["pins"] and pc != fp_pkg["pins"] + 1 and fp_pkg["family"] != "SOT-223" and not skipped:
                 problems.append(f"navnet siger {fp_pkg['pins']} ben men der er {pc} pads")
         # SOT/SC/TO packages leave lead positions empty, so the nearest-neighbour pitch isn't the nominal one.
         irregular = re.match(r"(SOT|SC-|TO-|SOD|DO-|SM[ABCF]|MELF|MiniMELF)", fp_pkg["family"] or "")
@@ -323,7 +337,7 @@ def report(comp, part_pkg_text=None, part_pkg_source="", reference=None, referen
 
     # 4. Symbol pins vs pads
     if geo:
-        pv = pins_vs_pads(comp.get("pins"), geo)
+        pv = pins_vs_pads(comp.get("pins"), geo, comp.get("pin_names"))
         if pv:
             checks.append(pv)
 

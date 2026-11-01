@@ -208,6 +208,8 @@ def packages_in(text):
             else:
                 pins = m.group(3) or m.group(4) or m.group(5) or m.group(1)
             pkg = P.parse_package(f"{fam}-{pins}" if pins else fam)
+            if pkg and not pins and re.search(r"SOT-?23$|SC-?70$", fam, re.I):
+                pkg["bare"] = True     # "SOT-23" alone says nothing about 3, 5, 6 or 8 leads
             if pkg and pkg["family"] != "CHIP":
                 found.append((pkg, line))
     return found
@@ -250,10 +252,21 @@ def check(url, mpn, fp_pkg):
     if len(text.strip()) < 200 or _readable(text) < 0.6:
         return {"check": name, "status": "unknown",
                 "msg": "Databladets tekst kunne ikke læses (scannet eller specielle skrifttyper)."}
+    # Is it the right datasheet at all? The part number's core ("AP7365" of AP7365-33YG-13) must appear.
+    # The series name: letters plus the first digit (AP7365-33YG-13 -> AP7). Series datasheets
+    # write wildcards ("FTSH-1XX-XX"), so the full number often isn't there.
+    m = re.match(r"[A-Za-z][A-Za-z\-]*\d", mpn or "")
+    core = _key(m.group(0)) if m else ""
+    if len(core) >= 3 and len(re.sub(r"\d", "", core)) >= 2:
+        if core not in _key(text):
+            return {"check": name, "status": "warn",
+                    "msg": f"Databladet nævner slet ikke {mpn} – linket peger sandsynligvis på et forkert datablad."}
     if not fp_pkg:
         return {"check": name, "status": "unknown", "msg": "Footprintets pakke kunne ikke aflæses."}
 
     def fits(pkg):
+        if pkg.get("bare") and (fp_pkg["family"] or "").startswith(pkg["family"][:5]):
+            return True
         st, _ = P.compare(fp_pkg, pkg)
         return st in ("ok", "partial")
 

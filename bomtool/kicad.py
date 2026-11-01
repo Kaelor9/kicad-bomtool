@@ -202,7 +202,7 @@ def _new_component(ref, props, lib_id, sheet_name, src):
     mfr_field, mfr = F.pick(fields, F.MFR_KEYS)
     _, datasheet = F.pick(fields, F.DATASHEET_KEYS)
     _, package = F.pick(fields, F.PACKAGE_KEYS)
-    return Component(
+    comp = Component(
         ref=ref, value=props.get("Value", ""), footprint=props.get("Footprint", ""),
         lib_id=lib_id, fields=fields, mpn=mpn, mpn_field=mpn_field or "", mfr=mfr,
         datasheet=datasheet if datasheet.lower().startswith("http") else
@@ -210,6 +210,12 @@ def _new_component(ref, props, lib_id, sheet_name, src):
         package_field=package, dist=F.distributor_numbers(fields), sheet=sheet_name,
         source=src, dnp=False, in_bom=True, on_board=True, pins=[], warnings=[],
     )
+    # MPN and manufacturer typed into each other's fields ("Mfr. No: C&K", "Mfr.: PTS810SJM250SMTR LFS")
+    if mpn and mfr and not re.search(r"\d", mpn) and F.looks_like_mpn(mfr):
+        comp["mpn"], comp["mfr"] = mfr, mpn
+        comp["warnings"].append(f"MPN- og producent-felterne ser ud til at være byttet om ('{mpn_field}' = '{mpn}', "
+                                f"'{mfr_field}' = '{mfr}') – bruger {mfr} som MPN.")
+    return comp
 
 
 class Project:
@@ -220,6 +226,7 @@ class Project:
         self.components = []
         self.warnings = []
         self.pcb_footprints = {}
+        self.pcb_by_path = {}     # symbol path ("/sheet uuid/.../symbol uuid") -> footprint
         self.fplib = FootprintLibrary(files)
 
     # -- loading
@@ -275,7 +282,8 @@ class Project:
                 continue
             attr = child(fp, "attr")
             attrs = [str(a) for a in attr[1:]] if attr is not None else []
-            self.pcb_footprints.setdefault(ref, {
+            entry = self.pcb_footprints.setdefault(ref, {
+                "ref": ref, "path": str(value(fp, "path", "")),
                 "lib_id": str(fp[1]) if len(fp) > 1 else "",
                 "props": props,
                 "geometry": footprint_geometry(fp),
@@ -283,6 +291,8 @@ class Project:
                 "dnp": "dnp" in attrs,
                 "board_only": "board_only" in attrs,
             })
+            if entry["path"]:
+                self.pcb_by_path.setdefault(entry["path"], entry)
 
     def _load_schematic(self, root):
         self.sheet_cache = {}
@@ -359,12 +369,15 @@ class Project:
         in_bom = flag(sym, "in_bom", True)
         on_board = flag(sym, "on_board", True)
         dnp = flag(sym, "dnp", False)
+        # The PCB links footprints to symbols by this path, not by reference.
+        pcb_path = f"{legacy_path}/{uuid}".replace("//", "/")
         comp = self.by_ref.get(ref)
         if comp is None:
             comp = _new_component(ref, props, lib_id, sheet_name, posixpath.basename(src))
             comp["in_bom"], comp["on_board"], comp["dnp"] = in_bom, on_board, dnp
             comp["pins"] = sorted(info["pins"], key=_natkey)
             comp["pin_names"] = dict(info.get("names") or {})
+            comp["pcb_paths"] = [pcb_path]
             if ref.endswith("?"):
                 comp["warnings"].append("Ikke annoteret (reference ender på '?').")
             self.by_ref[ref] = comp
@@ -377,6 +390,7 @@ class Project:
             comp["dist"] = {**extra["dist"], **comp["dist"]}
             comp["pins"] = sorted(set(comp["pins"]) | info["pins"], key=_natkey)
             comp["pin_names"] = {**(info.get("names") or {}), **comp.get("pin_names", {})}
+            comp.setdefault("pcb_paths", []).append(pcb_path)
             comp["dnp"] = comp["dnp"] or dnp
 
     def _components_from_pcb(self):
@@ -390,12 +404,16 @@ class Project:
             self.components.append(comp)
 
     def _link_pcb(self):
-        sch_refs = set()
+        used, renamed = set(), []
         for comp in self.components:
             ref = comp["ref"]
-            sch_refs.add(ref)
-            fp = self.pcb_footprints.get(ref)
+            fp = next((self.pcb_by_path[p] for p in comp.get("pcb_paths", []) if p in self.pcb_by_path), None)
+            if fp is None:
+                fp = self.pcb_footprints.get(ref)
             if fp:
+                used.add(id(fp))
+                if fp["ref"] != ref and comp["source"] != "pcb":
+                    renamed.append(f"{ref} → '{fp['ref']}'")
                 comp["geometry"] = fp["geometry"]
                 comp["geometry_source"] = "PCB"
                 comp["pcb_footprint"] = fp["lib_id"]
@@ -427,8 +445,16 @@ class Project:
             comp["virtual"] = is_virtual(comp)
         if self.components and self.components[0]["source"] != "pcb":
             for ref, fp in self.pcb_footprints.items():
-                if ref not in sch_refs and not fp["board_only"]:
-                    self.warnings.append(f"{ref} ({fp['lib_id']}) er på PCB'en men ikke i skematikken.")
+                lib = fp["lib_id"].lower()
+                if (id(fp) in used or fp["board_only"] or "**" in ref
+                        or any(v in lib for v in _VIRTUAL_FP + ("heatsink", "mounting"))):
+                    continue   # unannotated board items (REF**, heatsinks, holes) are PCB-only on purpose
+                self.warnings.append(f"{ref} ({fp['lib_id']}) er på PCB'en men ikke i skematikken.")
+            if renamed:
+                self.warnings.append(
+                    f"{len(renamed)} footprint(s) har en anden reference på PCB'en end i skematikken "
+                    f"({', '.join(renamed[:6])}{' …' if len(renamed) > 6 else ''}). De er koblet via symbolets ID, "
+                    "så kontrollen er korrekt – kør 'Update PCB from Schematic', hvis det ikke er meningen.")
 
 
 _VIRTUAL_PREFIX = ("H", "MH", "LOGO", "FID", "REF", "G", "KIBUZZARD", "NT", "JP_SOLDER")

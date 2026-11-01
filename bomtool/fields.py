@@ -186,6 +186,11 @@ def looks_like_mpn(text):
         return False
     if not re.search(r"[A-Za-z]", t) or not re.search(r"\d", t):
         return False
+    # KiCad's generic symbol/footprint names: Screw_Terminal_01x02, Conn_01x04, LED_Small ...
+    if re.search(r"[A-Z][a-z]{3,}", t) and "_" in t:
+        return False
+    if re.match(r"(?i)(conn|pin_?header|testpoint|jumper|mountinghole)", t):
+        return False
     if re.fullmatch(r"\d+(\.\d+)?\s*[pnuµμmkKMGRNUP]?\d{0,2}\s*(?i:F|H|Ω|ohm|V|W|A|Hz)?(/.*)?", t):
         return False
     return len(re.sub(r"[^A-Za-z0-9]", "", t)) >= 5

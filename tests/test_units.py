@@ -217,6 +217,46 @@ def test_fpcompare():
     check("wrong pitch is caught", any(r["what"].startswith("Pitch") and r["status"] == "mismatch" for r in rows))
 
 
+def _pads(nums, pitch=1.27):
+    return {"pads": [{"num": n, "x": 0, "y": i * pitch, "w": 1.5, "h": 0.6, "angle": 0, "type": "smd", "shape": "rect"}
+                     for i, n in enumerate(nums)], "graphics": []}
+
+
+def test_real_projects():
+    """Cases found in real KiCad 8 projects."""
+    from bomtool import datasheet as D, fields as F, footprint as FP, kicad as K, packages as P
+    # MOSFET with drain pins 5-8 on one pad, USB-C with doubled VBUS/GND
+    names = {"1": "S", "2": "S", "3": "S", "4": "G", "5": "D", "6": "D", "7": "D", "8": "D"}
+    r = FP.pins_vs_pads(list(names), _pads(["1", "2", "3", "4", "5"]), names)
+    check("merged drain pins are OK", r["status"] == "ok", r["msg"])
+    r = FP.pins_vs_pads(["1", "2", "3"], _pads(["1", "2"]), {"1": "A", "2": "B", "3": "C"})
+    check("a really missing pad is still caught", r["status"] == "mismatch", r["msg"])
+    # SO6 optocoupler with pin 2 left out
+    comp = {"ref": "IC3", "footprint": "Lib:SOIC-6", "package_field": "", "pins": ["1", "3", "4", "5", "6"],
+            "geometry": _pads(["1", "3", "4", "5", "6"]), "lib_id": ""}
+    rep = FP.report(comp)
+    own = next(c for c in rep["checks"] if c["check"] == "Navn ↔ egen geometri")
+    check("SOIC-6 with pin 2 missing is OK", own["status"] == "ok", own["msg"])
+    # IPC name for an HTSSOP with PowerPAD
+    a = P.parse_package("SOP65P640X120-17N")
+    check("SOP65P640X120-17N = TSSOP-16 + EP", (a["family"], a["pins"], a["ep"]) == ("TSSOP", 16, True), str(a))
+    check("... and fits 16-HTSSOP", P.compare(a, P.parse_package("16-HTSSOP"))[0] == "ok")
+    # Generic KiCad names are not part numbers
+    check("Screw_Terminal_01x07 is not an MPN", not F.looks_like_mpn("Screw_Terminal_01x07"))
+    check("TLP2361_TPL,E is an MPN", F.looks_like_mpn("TLP2361_TPL,E"))
+    # MPN and manufacturer typed into each other's fields
+    c = K._new_component("SW1", {"Value": "~", "Mfr. No:": "C&K", "Mfr.": "PTS810SJM250SMTR LFS"}, "", "/", "x")
+    check("swapped MPN/manufacturer fields fixed", c["mpn"] == "PTS810SJM250SMTR LFS" and c["mfr"] == "C&K", str(c["mpn"]))
+    # A datasheet for another part
+    orig = D.text_for
+    D.text_for = lambda url: "x" * 300 + "\nLT1963A regulator SOT-223\nMF-MSMF075/30 fuse 1812\n"
+    try:
+        check("wrong datasheet detected", "forkert datablad" in D.check("http://x", "AP7365-33YG-13", None)["msg"])
+        check("suffixes don't trigger it", "forkert" not in D.check("http://x", "MF-MSMF075/30-2", None)["msg"])
+    finally:
+        D.text_for = orig
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -43,7 +43,7 @@ ALIASES = [
 ]
 
 # Families where the leading "8-" / trailing "-8" is the pin count.
-PINNED = ["SOIC", "SO", "SOP", "SSOP", "TSSOP", "MSOP", "VSSOP", "HTSSOP", "QSOP", "TSOP",
+PINNED = ["SOIC", "SO", "SOP", "SSOP", "TSSOP", "MSOP", "VSSOP", "HTSSOP", "HSOP", "HSSOP", "HVSSOP", "QSOP", "TSOP",
           "QFN", "VQFN", "WQFN", "UQFN", "VFQFN", "DFN", "WDFN", "UDFN", "VDFN", "TDFN", "SON",
           "WSON", "VSON", "USON", "X2SON", "LQFP", "TQFP", "QFP", "PQFP", "LFCSP", "BGA", "FBGA",
           "LGA", "WLCSP", "CSP", "DIP", "PDIP", "SIP", "PLCC", "SOT-23", "SC-70", "TO-220", "TO-252",
@@ -53,6 +53,7 @@ PINNED = ["SOIC", "SO", "SOP", "SSOP", "TSSOP", "MSOP", "VSSOP", "HTSSOP", "QSOP
 FAMILY_GROUPS = {
     "SOIC": "SOIC", "SO": "SOIC", "SOP": "SOIC",
     "MSOP": "MSOP", "VSSOP": "MSOP", "uMAX": "MSOP", "TSSOP": "TSSOP", "SSOP": "SSOP", "QSOP": "SSOP",
+    "HTSSOP": "TSSOP", "HSOP": "SOIC", "HSSOP": "SSOP", "HVSSOP": "MSOP", "HMSOP": "MSOP",
     "QFN": "QFN", "VQFN": "QFN", "WQFN": "QFN", "UQFN": "QFN", "VFQFN": "QFN", "LFCSP": "QFN",
     "DFN": "DFN", "WDFN": "DFN", "UDFN": "DFN", "VDFN": "DFN", "TDFN": "DFN", "SON": "DFN",
     "WSON": "DFN", "VSON": "DFN", "USON": "DFN", "X2SON": "DFN",
@@ -119,10 +120,26 @@ def parse_package(text):
         fam = m.group(1).upper()
         out["pitch"] = int(m.group(2)) / 100
         out["pins"] = int(m.group(5))
-        if fam in ("QFN", "DFN", "SON") and out["pins"] % 2 == 1:
+        if fam in ("QFN", "DFN", "SON", "SOP", "SSOP", "TSSOP", "MSOP", "SOIC") and out["pins"] % 2 == 1:
             out["pins"] -= 1  # IPC counts the thermal pad
             out["ep"] = True
-        out["family"] = "SOIC" if fam == "SOP" and out["pitch"] == 1.27 else fam
+        span = int(m.group(3)) / 100
+        out["ipc"] = True
+        if fam == "SOT":
+            # SOT95P... = SOT-23 family, SOT65P... = SC-70 family
+            base = "SOT-23" if out["pitch"] >= 0.9 else "SC-70"
+            fam = base if (base == "SOT-23" and out["pins"] == 3) else f"{base}-{out['pins']}"
+        elif fam == "SOP":
+            # IPC calls them all SOP; pitch and lead span tell the JEDEC family.
+            if out["pitch"] >= 1.27:
+                fam = "SOIC"
+            elif span < 5.5:
+                fam = "MSOP"
+            elif span <= 6.6:
+                fam = "TSSOP"
+            else:
+                fam = "SSOP"
+        out["family"] = fam
         return out
 
     # Alias families (SOT-23, SMA ...) checked first; they can carry pin counts.
@@ -144,7 +161,8 @@ def parse_package(text):
     else:
         m = re.search(r"SOT-?23-?(\d)\b", t, re.I)
         if m:
-            out["family"], out["pins"] = f"SOT-23-{m.group(1)}", int(m.group(1))
+            n = int(m.group(1))
+            out["family"], out["pins"] = ("SOT-23" if n == 3 else f"SOT-23-{n}"), n
 
     if not out["family"]:
         fams = "|".join(sorted(set(PINNED), key=len, reverse=True))
@@ -192,6 +210,9 @@ def compare(a, b):
                                 f"({CHIP_IMP_TO_MET[b['chip']]} metrisk).")
         return "mismatch", f"{a['raw']} og {b['raw']} er forskellige pakketyper."
     ga, gb = family_group(a["family"]), family_group(b["family"])
+    thin = {"MSOP", "TSSOP", "SSOP"}
+    if (a.get("ipc") or b.get("ipc")) and ga in thin and gb in thin:
+        gb = ga   # IPC names only say "SOP": the shrink family is a guess, so let pins and pitch decide
     if ga != gb:
         # SOT-23 vs SOT-23-3 etc are handled by parse; QFN vs DFN is a real difference.
         return "mismatch", f"Pakketype {a['family']} passer ikke med {b['family']}."
