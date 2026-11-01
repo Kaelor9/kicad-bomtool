@@ -13,6 +13,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8   # test output contains Danish letters and arrows
     steps:
       - uses: actions/checkout@v4
 
