@@ -155,6 +155,7 @@
       boards: +$("#oBoards").value || 1, spare_passive_pct: +$("#oSpareP").value || 0,
       spare_passive_min: +$("#oSpareMin").value || 0, spare_pct: +$("#oSpare").value || 0,
       extra_budget_abs: +$("#oExtraAbs").value || 0, extra_budget_pct: +$("#oExtraPct").value || 0,
+      shipping: +$("#oShip").value || 0,
       use_api: $("#oApi").checked, suggest_mpn: $("#oSuggest").checked,
       check_datasheets: $("#oDs").checked, save_history: $("#oHist").checked,
     };
@@ -224,20 +225,20 @@
     const v = r.project.version;
     $("#rSub").textContent = `KiCad-filversion: skematik ${v.sch || "–"} (${v.sch_generator || "?"}), PCB ${v.pcb || "–"} (${v.pcb_generator || "?"}) · ${r.settings.boards} print`;
     const s = r.summary, cur = curOf(r);
-    const fpBad = (s.fp.mismatch || 0), fpWarn = (s.fp.warn || 0) + (s.fp.partial || 0) + (s.fp.unknown || 0);
     const tiles = [
-      ["Komponenter", s.parts, `${s.lines} BOM-linjer · ${s.excluded} udeladt`],
-      ["Uden MPN", s.no_mpn, s.no_mpn ? "se BOM-fanen" : "alle har varenummer"],
-      ["Footprints OK", s.fp.ok || 0, `${fpWarn} at tjekke · ${fpBad} fejl`],
+      ["Komponenter", s.parts, `${s.lines} BOM-linjer · ${s.excluded} udeladt · ${s.no_mpn} uden MPN`],
     ];
     for (const d of s.dist) tiles.push([`${d.distributor}-BOM`, `${d.ok}/${d.ok + d.problems}`, `${d.problems} afvigelser · ${d.extras} ekstra i kurven`]);
     if (r.totals.lines_priced) {
-      tiles.push(["Billigste mix", money(r.totals.mix, cur), `${r.totals.lines_priced} af ${s.lines} linjer prissat`
+      const sh = r.totals.shipping;
+      tiles.push([sh ? "Billigst inkl. fragt" : "Billigste mix", money(sh ? sh.total_with_shipping : r.totals.mix, cur),
+        `${r.totals.lines_priced} af ${s.lines} linjer prissat`
+        + (sh ? ` · ${sh.sellers.length} grosist(er)${sh.saved > 0 ? `, sparer ${money(sh.saved)} ved at samle` : ""}` : "")
         + (r.totals.lines_unbuyable ? ` · ${r.totals.lines_unbuyable} kun som hel rulle (ikke med)` : "")]);
       for (const [seller, t] of Object.entries(r.totals.per_seller))
         tiles.push([seller, money(t.total, cur), `har ${t.lines} af ${s.lines} linjer`]);
     }
-    $("#tiles").innerHTML = tiles.map(([k, v, sub]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(sub)}</div></div>`).join("");
+    $("#tiles").innerHTML = ctrlTiles() + tiles.map(([k, v, sub]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(sub)}</div></div>`).join("");
     const notes = [];
     if (!r.providers.length && r.settings.use_api)
       notes.push(["info", "Ingen grosist-API sat op – priser, lager, datablade og alternativer kræver mindst én nøgle (Indstillinger). Alt andet virker uden."]);
@@ -245,6 +246,7 @@
     r.project.warnings.forEach(w => notes.push(["warn", w]));
     $("#notices").innerHTML = notes.map(([c, t]) => `<div class="notice ${c}">${esc(t)}</div>`).join("");
     renderTab();
+    renderBoardView();
     const first = r.lines.find(l => l.status !== "ok") || r.lines[0];
     if (first) select(first.id, true); else renderSide();
   }
@@ -258,10 +260,39 @@
   });
   $("#onlyProblems").onchange = renderTab;
 
+  // The three checks at a glance; a tile filters the table to the lines with problems in that check.
+  const CHECKS = {
+    fp: { n: 1, label: "Footprint", stat: l => fpStat(l) },
+    ds: { n: 2, label: "Datablad", stat: l => dsStat(l)[0] },
+    buy: { n: 3, label: "Indkøb", stat: l => buyStat(l)[0] },
+  };
+  const bad = st => ORDER[st] >= 4 || st === "missing";
+  const warnish = st => ["warn", "partial"].includes(st);
+  function ctrlTiles() {
+    const lines = state.result.lines;
+    return Object.entries(CHECKS).map(([k, c]) => {
+      const sts = lines.map(c.stat);
+      const nb = sts.filter(bad).length, nw = sts.filter(warnish).length, nok = sts.filter(st => st === "ok").length;
+      const cls = nb ? "bad" : nw ? "warn" : "ok";
+      return `<button class="tile ctrl-tile ${cls} ${state.filter === k ? "on" : ""}" data-filter="${k}">
+        <div class="k">${c.n} ${c.label}</div>
+        <div class="v">${nb ? `${nb} fejl` : nw ? `${nw} at tjekke` : "Alt OK"}</div>
+        <div class="s">${nok} OK${nb && nw ? ` · ${nw} at tjekke` : ""}${state.filter === k ? " · viser kun problemer" : " · klik for at filtrere"}</div></button>`;
+    }).join("");
+  }
   function visibleLines() {
     const only = $("#onlyProblems").checked;
-    return state.result.lines.filter(l => !only || l.status !== "ok");
+    const f = state.filter && CHECKS[state.filter];
+    return state.result.lines.filter(l => (!only || l.status !== "ok") && (!f || bad(f.stat(l)) || warnish(f.stat(l))));
   }
+  document.addEventListener("click", e => {
+    const t = e.target.closest("[data-filter]");
+    if (!t) return;
+    state.filter = state.filter === t.dataset.filter ? null : t.dataset.filter;
+    $("#tiles").querySelectorAll(".ctrl-tile").forEach(x => x.remove());
+    $("#tiles").insertAdjacentHTML("afterbegin", ctrlTiles());
+    renderTab();
+  });
 
   function renderTab() {
     const f = { bom: tabBom, fp: tabFp, dist: tabDist, buy: tabBuy, excl: tabExcl, diff: tabDiff }[state.tab];
@@ -497,11 +528,34 @@
     if (r.providers.length && (l.mpn || l.mpn_guess)) return ["mismatch", "Ikke fundet hos grosisterne"];
     return ["unknown", r.providers.length ? "Intet MPN at købe efter" : "Ingen indkøbsdata (API-nøgle eller grosist-BOM)"];
   }
-  const needsAlt = l => state.result.providers.length && !state.choice[l.id] && ["warn", "mismatch", "missing"].includes(buyStat(l)[0]);
+  // Look for alternatives by itself when the part can't be bought as chosen, or doesn't fit its footprint.
+  const needsAlt = l => state.result.providers.length && !state.choice[l.id]
+    && (["warn", "mismatch", "missing"].includes(buyStat(l)[0]) || fpStat(l) === "mismatch");
   const ctrlPill = (st, label, tip) => `<span class="pill ${st === "none" ? "unknown" : esc(st)}" title="${esc(tip || "")}">${esc(label)}</span>`;
+
+  // ---------- board view ----------
+  function lineOfRef(ref) { return state.result.lines.find(l => l.refs.includes(ref)); }
+  function renderBoardView() {
+    const r = state.result, box = $("#boardBox");
+    const svg = renderBoard(r.board, ref => { const l = lineOfRef(ref); return l ? (l.status === "ok" ? "ok" : l.status) : ""; });
+    box.classList.toggle("hidden", !svg);
+    $("#boardSvg").innerHTML = svg;
+  }
+  function highlightBoard() {
+    const l = state.result.lines.find(x => x.id === state.sel);
+    const refs = new Set(l ? l.refs : []);
+    document.querySelectorAll("#boardSvg .bd-p").forEach(e => e.classList.toggle("hl", refs.has(e.dataset.ref)));
+  }
+  document.addEventListener("click", e => {
+    const p = e.target.closest("#boardSvg [data-ref]");
+    if (!p) return;
+    const l = lineOfRef(p.dataset.ref);
+    if (l) select(l.id, true);
+  });
 
   function select(id, scroll) {
     state.sel = id;
+    highlightBoard();
     document.querySelectorAll("[data-line].sel").forEach(e => e.classList.remove("sel"));
     document.querySelectorAll(`[data-line="${CSS.escape(id)}"]`).forEach(e => {
       e.classList.add("sel");
@@ -568,29 +622,65 @@
     return h;
   }
 
+  // Alternatives: grouped by how well they fit, sorted by stock (or price), with a minimum-stock filter.
+  const GROUPS = { "drop-in": "Passer direkte – samme footprint og pinout", "same-package": "Samme pakke – tjek pinout",
+    "check": "Pakken kunne ikke sammenlignes – tjek selv", "redesign": "Lignende funktion – kræver nyt footprint eller anden pinout" };
+  const stored = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private window */ } };
+  state.altSort = stored("altSort") || "stock";
+  state.altMin = +(stored("altMin") || 0);
+
+  function altCard(l, it, i, ch) {
+    const chosen = ch && ch.mpn === it.mpn;
+    return `<div class="alt ${chosen ? "chosen" : ""}">
+      <div class="alt-head"><span class="mono"><b>${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.mpn)}</a>` : esc(it.mpn)}</b></span> <span class="sub">${esc(it.mfr)}</span>
+        <span class="alt-stock ${it.stock ? "" : "bad-text"}">${it.stock != null ? `${Number(it.stock).toLocaleString("da-DK")} på lager` : "lager ukendt"}</span>
+        ${it.sku && it.price != null ? `<button class="btn small ${chosen ? "primary" : ""}" data-choose="${esc(l.id)}" data-i="${i}">${chosen ? "Valgt" : "Vælg"}</button>` : ""}</div>
+      <div class="sub">${esc((it.desc || "").slice(0, 120))}</div>
+      <div class="row" style="margin-top:4px">
+        ${it.fit ? pill({ ok: "ok", partial: "partial", mismatch: "mismatch" }[it.fit] || "unknown", { ok: "Passer på footprint", partial: "Footprint: måske", mismatch: "Andet footprint", unknown: "Footprint: ukendt" }[it.fit]) : ""}
+        ${it.pinout ? pill(it.pinout.status, { ok: "Samme pinout", warn: "Pinout delvist", mismatch: "Anden pinout" }[it.pinout.status]) : ""}
+        ${it.same_seller ? `<span class="pill ok">samme grosist</span>` : ""}
+        <span class="sub">${esc(it.seller || it.source || "")}${it.price != null ? ` · ${it.qty} stk. ${money(it.price, it.currency)}` : ""}${it.package ? ` · ${esc(it.package)}` : ""}</span>
+        ${it.datasheet ? `<a class="sub" href="${esc(it.datasheet)}" target="_blank" rel="noopener">datablad</a>` : ""}</div>
+      ${it.relation ? `<div class="sub">${esc(it.relation)}</div>` : ""}
+      ${it.check ? `<div class="sub" style="color:var(--warn)">${esc(it.check)}</div>` : ""}
+      ${it.pinout && it.pinout.status !== "ok" ? `<div class="sub" style="color:var(--warn)">${esc(it.pinout.msg)}</div>` : ""}</div>`;
+  }
+
   function sideAlts(l) {
     const res = state.alts[l.id];
     if (res === "loading") return `<p class="hint">Søger alternativer … (grosisternes rate limits kan gøre det lidt langsomt)</p>`;
     if (res && res.error) return `<div class="notice bad">${esc(res.error)}</div>`;
     if (!res) {
       if (!state.result.providers.length) return `<p class="hint">Alternativer kræver mindst én grosist-API-nøgle (Indstillinger).</p>`;
-      return `<button class="btn small" data-alt="${esc(l.id)}">Find alternativer</button> <span class="sub">${l.kind ? "Samme værdi og pakke, mindst lige gode specs." : "Grosisternes egne erstatninger, tjekket for pakke og pinout."}</span>`;
+      return `<button class="btn small" data-alt="${esc(l.id)}">Find alternativer</button> <span class="sub">${l.kind ? "Samme værdi og footprint, mindst lige gode specs." : "Erstatninger og komponenter med samme funktion – også dem der kræver nyt footprint."}</span>`;
     }
     if (!res.items.length) return `<p class="hint">${esc(res.note)}</p>`;
     const ch = state.choice[l.id];
-    return `<p class="hint">${esc(res.note)}</p>` + res.items.map((it, i) => `<div class="alt ${ch && ch.mpn === it.mpn ? "chosen" : ""}">
-      <div class="alt-head"><span class="mono"><b>${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.mpn)}</a>` : esc(it.mpn)}</b></span> <span class="sub">${esc(it.mfr)}</span>
-        ${it.sku && it.price != null ? `<button class="btn small ${ch && ch.mpn === it.mpn ? "primary" : ""}" data-choose="${esc(l.id)}" data-i="${i}">${ch && ch.mpn === it.mpn ? "Valgt" : "Vælg"}</button>` : ""}</div>
-      <div class="sub">${esc((it.desc || "").slice(0, 110))}</div>
-      <div class="row" style="margin-top:4px">
-        ${it.fit ? pill({ ok: "ok", partial: "partial", mismatch: "mismatch" }[it.fit] || "unknown", { ok: "Passer på footprint", partial: "Footprint: måske", mismatch: "Passer ikke på footprint", unknown: "Footprint: ukendt" }[it.fit]) : ""}
-        ${it.pinout ? pill(it.pinout.status, { ok: "Samme pinout", warn: "Pinout delvist", mismatch: "Anden pinout" }[it.pinout.status]) : ""}
-        ${it.same_seller ? `<span class="pill ok">samme grosist</span>` : ""}
-        <span class="sub">${esc(it.seller || it.source || "")}${it.price != null ? ` · ${it.qty} stk. ${money(it.price, it.currency)}` : ""}${it.stock != null ? ` · lager ${it.stock}` : ""}</span>
-        ${it.datasheet ? `<a class="sub" href="${esc(it.datasheet)}" target="_blank" rel="noopener">datablad</a>` : ""}</div>
-      ${it.check ? `<div class="sub" style="color:var(--warn)">${esc(it.check)}</div>` : ""}
-      ${it.pinout && it.pinout.status !== "ok" ? `<div class="sub" style="color:var(--warn)">${esc(it.pinout.msg)}</div>` : ""}</div>`).join("");
+    const min = state.altMin || 0;
+    const shown = res.items.map((it, i) => ({ it, i })).filter(({ it }) => (it.stock || 0) >= min);
+    const key = state.altSort === "price" ? (({ it }) => [it.price == null, it.price || 0]) : (({ it }) => [false, -(it.stock || 0)]);
+    shown.sort((a, b) => { const ka = key(a), kb = key(b); return ka[0] - kb[0] || ka[1] - kb[1]; });
+    const controls = `<div class="row alt-ctl">
+      <label class="inline">Sortér <select id="altSort"><option value="stock" ${state.altSort === "stock" ? "selected" : ""}>Størst lager først</option><option value="price" ${state.altSort === "price" ? "selected" : ""}>Billigst først</option></select></label>
+      <label class="inline">Minimum lager <input id="altMin" type="number" min="0" step="1000" value="${min || ""}" placeholder="fx 50000"></label>
+      <span class="sub">${shown.length} af ${res.items.length} vist</span></div>`;
+    let body = "";
+    const order = Object.keys(GROUPS);
+    for (const g of order) {
+      const inG = shown.filter(({ it }) => (it.group || "drop-in") === g);
+      if (!inG.length) continue;
+      if (res.kind !== "passive") body += `<h4>${esc(GROUPS[g])} (${inG.length})</h4>`;
+      body += inG.map(({ it, i }) => altCard(l, it, i, ch)).join("");
+    }
+    if (!shown.length) body = `<p class="hint">Ingen alternativer med mindst ${min.toLocaleString("da-DK")} på lager.</p>`;
+    return `<p class="hint">${esc(res.note)}</p>${controls}${body}`;
   }
+  document.addEventListener("change", e => {
+    if (e.target.id === "altSort") { state.altSort = e.target.value; store("altSort", state.altSort); renderSide(); }
+    if (e.target.id === "altMin") { state.altMin = Math.max(0, +e.target.value || 0); store("altMin", String(state.altMin)); renderSide(); }
+  });
 
   function renderSide() {
     const side = $("#side");
@@ -625,6 +715,11 @@
         ${fpLegend(fp, cur.label)}
         ${!dsFp && cmp && !cmp.error ? `<p class="sub">Databladets footprint kan ikke tegnes: ${cmp.dims ? "mål-tabellen mangler ben-målene (b, L, e)." : "databladet har ingen mål-tabel som tekst – se tegningen i trin 2."}</p>` : ""}
         ${dsFp ? `<p class="sub">Databladets land pattern er beregnet efter ${esc(dsFp.rule)} ud fra pakkemålene.</p>` : ""}
+        ${l.datasheet && l.datasheet.startsWith("http") && !l.kind ? `<div class="ds-pic">
+          <div class="row"><span class="sub">Fra databladet:</span><span class="seg">${["land", "outline"].map(k => `<button class="${(state.picKind || "land") === k ? "on" : ""}" data-pic="${k}">${k === "land" ? "Anbefalet footprint" : "Pakketegning"}</button>`).join("")}</span></div>
+          <img alt="Udsnit af databladet" loading="lazy" src="/api/dsimage/${encodeURIComponent(state.job)}/${encodeURIComponent(l.id)}?kind=${state.picKind || "land"}"
+            onerror="this.replaceWith(Object.assign(document.createElement('p'),{className:'sub',textContent:'Ingen tegning fundet i databladet.'}))">
+        </div>` : ""}
         ${f ? `<p class="sub">Pitch ${mm(f.pitch)} · pad ${f.pad_w ? `${f.pad_w} × ${f.pad_l} mm` : "–"}${Object.values(f.rows).map(r => ` · yder/inder ${r.outer}/${r.inner ?? "–"} mm`).join("")}${f.ep ? ` · termisk pad ${f.ep[0]} × ${f.ep[1]} mm` : ""}${f.body ? ` · krop ${f.body[0]} × ${f.body[1]} mm` : ""}</p>` : ""}
         <ul class="checks">${(fp.checks || []).filter(c => c.check !== "Datablad").map(c => `<li>${pill(c.status)}<span><b>${esc(c.check)}</b><br>${esc(c.msg)}</span></li>`).join("")}</ul>
       </section>
@@ -661,7 +756,9 @@
     document.querySelectorAll("#side [data-page]").forEach(b => b.classList.toggle("primary", b.dataset.page === String(p)));
   }
   function refreshRow(id) {
-    // Re-render the table so the control columns follow a new choice.
+    // Re-render the table and tiles so the control columns follow a new choice.
+    $("#tiles").querySelectorAll(".ctrl-tile").forEach(x => x.remove());
+    $("#tiles").insertAdjacentHTML("afterbegin", ctrlTiles());
     renderTab();
     select(id);
   }
@@ -675,6 +772,8 @@
     if (mo) { mouserCart(mo.dataset.mocart); return; }
     const pg = e.target.closest("#side [data-page]");
     if (pg) { showPage(pg.dataset.page); return; }
+    const pic = e.target.closest("[data-pic]");
+    if (pic) { state.picKind = pic.dataset.pic; renderSide(); return; }
     const rv = e.target.closest("[data-refview]");
     if (rv) { state.refView = rv.dataset.refview; renderSide(); return; }
     const altBtn = e.target.closest("[data-alt]");
@@ -715,6 +814,17 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
+  $("#btnExportXlsx").onclick = async () => {
+    const r = state.result;
+    const res = await fetch("/api/export/xlsx", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job: state.job, choices: state.choice }) });
+    if (!res.ok) { alert((await res.json()).error || "Eksport fejlede"); return; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(await res.blob());
+    a.download = `${r.project.name || "bom"}_BOM.xlsx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
   $("#btnExportBom").onclick = () => {
     const r = state.result;
     const rows = [["Referencer", "Antal pr. print", "Værdi", "Footprint", "MPN", "Producent", "Datablad", "Status", "Footprint-status", "Bemærkninger"]];

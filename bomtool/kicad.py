@@ -90,6 +90,51 @@ def footprint_geometry(fp_node):
     return {"pads": pads, "graphics": lines, "bottom": str(layer).startswith("B."), "rot": fp_rot}
 
 
+def _edge_cuts(pcb):
+    """The board outline (Edge.Cuts) as simple shapes in board coordinates."""
+    out = []
+    for kind in ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly"):
+        for g in children(pcb, kind):
+            if str(value(g, "layer", "")) != "Edge.Cuts":
+                continue
+            if kind == "gr_poly":
+                pts = child(g, "pts")
+                if pts is not None:
+                    out.append({"k": "poly", "pts": [(num(c[1]), num(c[2])) for c in children(pts, "xy")]})
+                continue
+            s, e = child(g, "start") or child(g, "center"), child(g, "end")
+            if s is None or e is None:
+                continue
+            item = {"k": kind[3:], "x1": num(s[1]), "y1": num(s[2]), "x2": num(e[1]), "y2": num(e[2])}
+            if kind == "gr_arc":
+                mid = child(g, "mid")
+                if mid is None:
+                    continue
+                item["xm"], item["ym"] = num(mid[1]), num(mid[2])
+            out.append(item)
+    return out
+
+
+def _local_box(geo):
+    """Half width/height of a footprint (its Fab outline, or its pads) in its own coordinates."""
+    xs, ys = [], []
+    for g in geo.get("graphics") or []:
+        if g.get("l") == "fab" and g["k"] in ("line", "rect"):
+            xs += [g["x1"], g["x2"]]
+            ys += [g["y1"], g["y2"]]
+        elif g.get("l") == "fab" and g["k"] == "poly":
+            xs += [x for x, _ in g["pts"]]
+            ys += [y for _, y in g["pts"]]
+    if not xs:
+        for p in geo.get("pads") or []:
+            xs += [p["x"] - p["w"] / 2, p["x"] + p["w"] / 2]
+            ys += [p["y"] - p["h"] / 2, p["y"] + p["h"] / 2]
+    if not xs:
+        return [0, 0, 0.5, 0.5]
+    return [round((max(xs) + min(xs)) / 2, 3), round((max(ys) + min(ys)) / 2, 3),
+            round((max(xs) - min(xs)) / 2, 3), round((max(ys) - min(ys)) / 2, 3)]
+
+
 def _fp_fields(fp_node):
     """Reference/value/properties of a PCB footprint (KiCad 6 fp_text or 8+ property)."""
     props = properties(fp_node)
@@ -233,6 +278,7 @@ class Project:
         self.warnings = []
         self.pcb_footprints = {}
         self.pcb_by_path = {}     # symbol path ("/sheet uuid/.../symbol uuid") -> footprint
+        self.board_outline = []
         self.fplib = FootprintLibrary(files)
 
     # -- loading
@@ -288,7 +334,11 @@ class Project:
                 continue
             attr = child(fp, "attr")
             attrs = [str(a) for a in attr[1:]] if attr is not None else []
+            at = child(fp, "at")
+            pos = [num(at[1]) if at is not None and len(at) > 1 else 0.0, num(at[2]) if at is not None and len(at) > 2 else 0.0,
+                   num(at[3]) if at is not None and len(at) > 3 else 0.0]
             entry = self.pcb_footprints.setdefault(ref, {
+                "at": pos, "bottom": str(value(fp, "layer", "F.Cu")).startswith("B."),
                 "ref": ref, "path": str(value(fp, "path", "")),
                 "lib_id": str(fp[1]) if len(fp) > 1 else "",
                 "props": props,
@@ -299,6 +349,7 @@ class Project:
             })
             if entry["path"]:
                 self.pcb_by_path.setdefault(entry["path"], entry)
+        self.board_outline = _edge_cuts(pcb)
 
     def _load_schematic(self, root):
         self.sheet_cache = {}
@@ -418,6 +469,7 @@ class Project:
                 fp = self.pcb_footprints.get(ref)
             if fp:
                 used.add(id(fp))
+                comp["pcb_pos"] = fp["at"] + [fp["bottom"]] + _local_box(fp["geometry"])
                 if fp["ref"] != ref and comp["source"] != "pcb":
                     renamed.append(f"{ref} → '{fp['ref']}'")
                 comp["geometry"] = fp["geometry"]

@@ -155,6 +155,7 @@ class Analysis:
             line.pop("offers", None)
             line["status"] = self._line_status(line, dist_boms)
 
+        consolidated = pricing.consolidate(lines, float(self.settings.get("shipping", 0) or 0))
         summary = self._summary(lines, excluded, dist_boms, project)
         self.progress("Færdig.", 100)
         for line in lines:
@@ -165,8 +166,11 @@ class Analysis:
             "lines": lines, "excluded": excluded,
             "dist_boms": [{k: v for k, v in d.items()} for d in dist_boms],
             "references": [{"file": r["file"], "name": r["name"]} for r in refs],
-            "totals": pricing.totals(lines), "summary": summary, "errors": self.errors,
+            "totals": dict(pricing.totals(lines), shipping=consolidated), "summary": summary, "errors": self.errors,
             "providers": [p.name for p in self.providers], "settings": self.settings,
+            # For the board view: outline + each placed part [x, y, rot, bottom, cx, cy, half w, half h]
+            "board": {"outline": project.board_outline,
+                      "parts": {c["ref"]: c["pcb_pos"] for c in project.components if c.get("pcb_pos")}},
         }
 
     # -- API ---------------------------------------------------------------------
@@ -249,6 +253,7 @@ class Analysis:
             if line["datasheet"].startswith("//"):
                 line["datasheet"] = "https:" + line["datasheet"]
         line["desc"] = first["desc"]
+        line["api_category"] = first.get("category", "")
         line["api_package"] = next((p["package"] for p in found if p.get("package")), "") or \
             next((p["desc"] for p in found if P.parse_package(p["desc"] or "")), "")
         lc = " ".join(p.get("lifecycle", "") for p in found).lower()
@@ -266,6 +271,8 @@ class Analysis:
                     f"{names[line['kind']]}: {first.get('desc') or first.get('category')}.")
             else:
                 specs = alternatives.candidate_specs(first, line["kind"])
+                # The chosen part's ratings, so alternatives can match them (voltage, dielectric, tolerance ...)
+                line["api_specs"] = {k: v for k, v in specs.items() if k not in ("value", "chip") and v is not None}
                 if specs.get("value") is not None and abs(specs["value"] - line["parsed"]["value"]) > \
                         abs(line["parsed"]["value"]) * 0.001 + 1e-15:
                     line["warnings"].append(

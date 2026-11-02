@@ -59,6 +59,10 @@ class FakeProvider:
     def search(self, keywords, limit=10, exact_first=None):
         # Return a few candidates: one matching, one wrong value, one wrong package
         words = keywords.split()
+        if words[0] not in ("resistor", "capacitor", "inductor"):
+            # Similar-function search for ICs: one in another package, one in a common one
+            return [self._part("SIMILAR-SOT23", "similar part", "SOT-23-5"),
+                    self._part("SIMILAR-SOIC8", "similar part", "8-SOIC (0.154\", 3.90mm Width)")]
         kind = {"resistor": "R", "capacitor": "C", "inductor": "L"}[words[0]]
         val, chip = words[1], words[-1]
         from bomtool.packages import CHIP_IMP_TO_MET
@@ -118,7 +122,7 @@ def main():
                   [s["mpn"] for s in l.get("suggested", [])], l.get("suggested_note"))
     line = next(l for l in res["lines"] if l["kind"] is None and l["mpn"])
     alt = analyze.run_alternatives(res, line["id"], {}, settings)
-    print("alt", line["id"], alt["note"], [(i["mpn"], i.get("relation"), i.get("fit")) for i in alt["items"]])
+    print("alt", line["id"], alt["note"], [(i["mpn"], i.get("relation"), i.get("fit"), i.get("group")) for i in alt["items"]])
     # history: save, change a part, diff
     import copy
     import tempfile

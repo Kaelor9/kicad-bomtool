@@ -9,7 +9,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from . import __version__, config, datasheet, fpcompare, history, updater
+from . import __version__, config, datasheet, dsimage, export, fpcompare, history, updater
 from .analyze import Analysis, run_alternatives
 from .providers import ProviderError, make_providers, mouser_cart
 
@@ -112,6 +112,32 @@ class Handler(BaseHTTPRequestHandler):
             if not force and config.load().get("check_updates", "1") != "1":
                 return self._json({"current": __version__, "newer": False, "disabled": True})
             return self._json(updater.check(force))
+        if path.startswith("/api/dsimage/"):
+            # /api/dsimage/<job>/<line id>?kind=land|outline - a cut-out of the datasheet drawing
+            parts = path.split("/")
+            job = JOBS.get(parts[3]) if len(parts) > 4 else None
+            line = _line(job, unquote(parts[4])) if job else None
+            kind = "outline" if "kind=outline" in (urlparse(self.path).query or "") else "land"
+            if not line or not (line.get("datasheet") or "").startswith("http") or not dsimage.available():
+                self.send_error(404)
+                return
+            try:
+                got = dsimage.image(line["datasheet"], kind, dsimage.fp_package(line["footprint"]))
+            except Exception:  # noqa: BLE001 - unreadable PDF: the client hides the picture
+                traceback.print_exc()
+                got = None
+            if not got:
+                self.send_error(404)
+                return
+            png, page = got
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("X-Page", str(page))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.end_headers()
+            self.wfile.write(png)
+            return
         if path.startswith("/api/datasheet/"):
             # /api/datasheet/<job>/<line id> - the cached PDF, so the window can show the drawing page
             parts = path.split("/")
@@ -174,6 +200,17 @@ class Handler(BaseHTTPRequestHandler):
                 settings = dict(job["result"].get("settings") or {})
                 res = run_alternatives(job["result"], body.get("line"), config.load(), settings)
                 return self._json(res)
+            if path == "/api/export/xlsx":
+                job = JOBS.get(body.get("job"))
+                if not job or job.get("state") != "done":
+                    return self._json({"error": "Analysen findes ikke længere – kør den igen."}, 404)
+                data = export.build_xlsx(job["result"], body.get("choices") or {})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == "/api/fpcompare":
                 job = JOBS.get(body.get("job"))
                 line = _line(job, body.get("line"))

@@ -62,6 +62,7 @@
         <label>Reserve, øvrige (%)<input type="number" id="oSpare" min="0" value="0"></label>
         <label>"Køb flere" hvis højst + (kr.)<input type="number" id="oExtraAbs" min="0" value="5" step="0.5"></label>
         <label>… eller + (%)<input type="number" id="oExtraPct" min="0" value="10"></label>
+        <label>Fragt pr. grosist (kr.)<input type="number" id="oShip" min="0" value="0" step="5" title="Bruges til at samle indkøbet hos færrest grosister"></label>
         <label class="check"><input type="checkbox" id="oApi" checked> Hent priser, lager og datablade</label>
         <label class="check"><input type="checkbox" id="oSuggest" checked> Foreslå MPN til passive uden varenummer</label>
         <label class="check"><input type="checkbox" id="oDs" checked> Læs datablade (pakke pr. MPN)</label>
@@ -88,7 +89,8 @@
       </div>
       <div class="row">
         <button class="btn ghost" id="btnBack">← Ny analyse</button>
-        <button class="btn" id="btnExportBom">Eksportér BOM (CSV)</button>
+        <button class="btn primary" id="btnExportXlsx">Eksportér BOM (Excel)</button>
+        <button class="btn ghost" id="btnExportBom">CSV</button>
       </div>
     </div>
     <div class="tiles" id="tiles"></div>
@@ -104,7 +106,10 @@
     </nav>
     <div class="workspace">
       <div id="tabBody"></div>
-      <aside id="side" class="side" aria-label="Kontrolpanel"></aside>
+      <aside class="side" aria-label="Kontrolpanel">
+        <details id="boardBox" class="board hidden" open><summary>Printet <span class="sub">– klik på en komponent</span></summary><div id="boardSvg"></div></details>
+        <div id="side"></div>
+      </aside>
     </div>
   </section>
 </main>

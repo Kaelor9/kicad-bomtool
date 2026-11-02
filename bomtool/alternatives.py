@@ -5,6 +5,7 @@ dielectric) - candidates must meet or beat every known spec.
 Everything else: the distributors' own substitute / similar-part data. These
 are suggestions; pinout and behaviour must be checked by a human.
 """
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from . import datasheet, dsdata
@@ -17,48 +18,54 @@ DIELECTRIC_RANK = {"C0G": 4, "X8R": 3, "X7R": 3, "X7S": 3, "X6S": 2, "X5R": 2, "
 VALUE_PARAMS = {"R": ("Resistance",), "C": ("Capacitance",), "L": ("Inductance",)}
 
 
-def _keywords(line, chip):
-    p = line["parsed"]
-    val = F.format_value(p["value"], line["kind"]).replace("µ", "u").replace("Ω", "")
-    if line["kind"] == "R":
+def _keywords(kind, want, chip, short=False):
+    val = F.format_value(want["value"], kind).replace("µ", "u").replace("Ω", "")
+    if kind == "R":
         return f"resistor {val} {chip}"
-    if line["kind"] == "C":
-        extra = " ".join(x for x in (p.get("dielectric", ""), f"{p['voltage']:g}V" if p.get("voltage") else "") if x)
+    if kind == "C":
+        extra = "" if short else " ".join(x for x in (want.get("dielectric", ""),
+                                                      f"{want['voltage']:g}V" if want.get("voltage") else "") if x)
         return f"capacitor {val} {extra} {chip}".replace("  ", " ")
     return f"inductor {val} {chip}"
 
 
+_UNIT = {"R": "1R", "C": "1uF", "L": "1uH"}
+_SPEC_TOKENS = re.compile(r"\d+(?:[.,]\d+)?\s*k?V(?:DC|dc)?\b|±\s*\d+(?:[.,]\d+)?\s*%|\b(?:C0G|NP0|X[5-8][RSTP]|Y5V|Z5U)\b|"
+                          r"\d+(?:[.,]\d+)?\s*m?W\b|\d+(?:[.,]\d+)?\s*m?A\b|\d+/\d+\s*W\b")
+
+
+def _specs_from(text, kind):
+    """Ratings in a free text ("4.7 µF ±20% 50V Ceramic Capacitor X7R 1210") - parsed behind a dummy value,
+    so words like 'Ceramic' don't stop the parser."""
+    toks = _SPEC_TOKENS.findall(text or "")
+    if not toks:
+        return {}
+    got = F.parse_value(_UNIT[kind] + " " + " ".join(toks), kind) or {}
+    got.pop("value", None)
+    return got
+
+
 def candidate_specs(part, kind):
     params = part.get("params") or {}
-    text = " ".join([part.get("desc", "")] + [f"{v}" for k, v in params.items()
-                                              if k in VALUE_PARAMS[kind]])
     val = None
     for name in VALUE_PARAMS[kind]:
         if params.get(name):
             got = F.parse_value(params[name], kind)
             if got:
                 val = got["value"]
-    got = F.parse_value(text, kind) or {}
     if val is None:
+        got = F.parse_value(part.get("desc", ""), kind) or {}
         val = got.get("value")
+        if val is None:
+            m = re.search(r"\d+(?:[.,]\d+)?\s*(?:[pnuµmkKM]?\s*(?:F|H|Ω|Ohm|ohm)s?)\b", part.get("desc") or "")
+            got = F.parse_value(m.group(0), kind) if m else {}
+            val = (got or {}).get("value")
     specs = {"value": val}
-    for k in ("voltage", "tolerance", "dielectric", "power", "current"):
-        if k in got:
-            specs[k] = got[k]
+    specs.update(_specs_from(part.get("desc", ""), kind))
     for k, v in params.items():
         kl = k.lower()
-        if kl.startswith("voltage") and "voltage" not in specs:
-            g = F.parse_value("1 " + v, "C") or {}
-            if "voltage" in g:
-                specs["voltage"] = g["voltage"]
-        if kl == "tolerance":
-            g = F.parse_value("1 " + v, kind) or {}
-            if "tolerance" in g:
-                specs["tolerance"] = g["tolerance"]
-        if kl.startswith("temperature coefficient") and kind == "C":
-            g = F.parse_value("1 " + v, "C") or {}
-            if "dielectric" in g:
-                specs["dielectric"] = g["dielectric"]
+        if kl.startswith("voltage") or kl == "tolerance" or kl.startswith("temperature coefficient")                 or kl.startswith("power") or kl.startswith("current"):
+            specs.update(_specs_from(v, kind))      # the parameter table beats the description
     pkg = P.parse_package(part.get("package") or "") or P.parse_package(part.get("desc") or "")
     specs["chip"] = pkg["chip"] if pkg else None
     return specs
@@ -89,89 +96,166 @@ def meets(want, have, chip):
     return True, unverified
 
 
-def find(line, providers, need, settings, preferred=None, limit=4):
-    """Return dict(kind, items, note). items carry price at `need`."""
-    if line.get("kind") and line.get("parsed"):
-        chip = None
-        for src in (line.get("api_package"), line["footprint"], line.get("package_field")):
-            pkg = P.parse_package(src or "")
-            if pkg and pkg.get("chip"):
-                chip = pkg["chip"]
-                break
-        if not chip:
-            return {"kind": "passive", "items": [], "note": "Kunne ikke bestemme chip-størrelsen ud fra footprintet."}
-        kw = _keywords(line, chip)
-        items, errors = [], []
-        for prov in providers:
-            try:
-                parts = prov.search(kw, limit=25)
-            except ProviderError as e:
-                errors.append(f"{prov.name}: {e}")
-                continue
-            for part in parts:
-                specs = candidate_specs(part, line["kind"])
-                ok, unverified = meets(line["parsed"], specs, chip)
-                if not ok or not part.get("offers"):
-                    continue
-                plan = plan_line(part["offers"], need, settings)
-                if not plan:
-                    continue
-                item = _item(part, plan, specs)
-                if unverified:
-                    item["check"] = "Ikke verificeret ud fra grosistens data: " + ", ".join(unverified) + "."
-                items.append(item)
-        # Fully verified candidates first, then by price.
-        items = _rank(items, preferred, line)
-        items.sort(key=lambda it: bool(it.get("check")))
-        note = f"Søgt efter: {kw}" + (f" · Fejl: {'; '.join(errors)}" if errors else "")
-        return {"kind": "passive", "items": items[:limit * 3], "note": note}
+def _search(providers, query, limit, errors):
+    out = []
+    for prov in providers:
+        try:
+            out.extend(prov.search(query, limit=limit))
+        except ProviderError as e:
+            errors.append(f"{prov.name}: {e}")
+    return out
 
-    # Active / other parts
+
+def find(line, providers, need, settings, preferred=None, limit=4):
+    """Return dict(kind, items, note). items carry price at `need`.
+
+    The footprint is what the board was made with, so it decides the package; the part that was
+    chosen (even when it doesn't fit) tells which ratings to keep."""
+    if line.get("kind") and line.get("parsed"):
+        return _passives(line, providers, need, settings, preferred)
+    return _actives(line, providers, need, settings, preferred)
+
+
+def _passives(line, providers, need, settings, preferred):
+    kind = line["kind"]
+    fp_pkg = P.parse_package(line["footprint"].split(":")[-1]) or P.parse_package(line.get("package_field") or "")
+    part_pkg = P.parse_package(line.get("api_package") or "")
+    chip = (fp_pkg or {}).get("chip") or (part_pkg or {}).get("chip")
+    if not chip:
+        return {"kind": "passive", "items": [], "note": "Kunne ikke bestemme chip-størrelsen ud fra footprintet."}
+    want = dict(line["parsed"])
+    for k, v in (line.get("api_specs") or {}).items():
+        want.setdefault(k, v)
+    notes = []
+    if part_pkg and part_pkg.get("chip") and part_pkg["chip"] != chip:
+        notes.append(f"Den valgte komponent er {part_pkg['chip']}, men footprintet er {chip} – "
+                     f"der søges {chip} med samme værdi og mindst lige gode specs.")
+    errors, items, seen = [], [], set()
+    queries = [_keywords(kind, want, chip), _keywords(kind, want, chip, short=True)]
+    for q in dict.fromkeys(queries):
+        for part in _search(providers, q, 50, errors):
+            if F.key(part["mpn"]) in seen:
+                continue
+            seen.add(F.key(part["mpn"]))
+            specs = candidate_specs(part, kind)
+            ok, unverified = meets(want, specs, chip)
+            if not ok or not part.get("offers"):
+                continue
+            plan = plan_line(part["offers"], need, settings)
+            if not plan or plan["best"].get("impractical"):
+                continue
+            item = _item(part, plan, specs)
+            item["fit"] = "ok"
+            item["group"] = "drop-in"
+            if unverified:
+                item["check"] = "Ikke verificeret ud fra grosistens data: " + ", ".join(unverified) + "."
+            items.append(item)
+        if len(items) >= 15:
+            break
+    items = _rank(items, preferred, line)
+    items.sort(key=lambda it: (bool(it.get("check")), -(it.get("stock") or 0)))
+    spec = ", ".join(x for x in (F.format_value(want["value"], kind), chip,
+                                f"≥{want['voltage']:g} V" if want.get("voltage") else "",
+                                want.get("dielectric", ""),
+                                f"≤{want['tolerance']:g} %" if want.get("tolerance") else "") if x)
+    notes.append(f"Krav: {spec}." + (f" Fejl: {'; '.join(errors)}" if errors else ""))
+    return {"kind": "passive", "items": items[:30], "note": " ".join(notes)}
+
+
+_PKG_WORDS = (r"\b(\d+-?(SOIC|SOP|SSOP|TSSOP|MSOP|QFN|DFN|SON|WSON|VSON|LQFP|TQFP|BGA|SOT|SC70|SC-70|TO|DIP)[\w-]*"
+              r"|SOT-?\d+[\w-]*|SC-?70[\w-]*|TO-\d+[\w-]*|\d+(SOIC|TSSOP|SSOP|QFN|DFN|SOT)\w*)")
+
+
+def _similar_query(line):
+    """Words that describe what the part does, without its package:
+    "IC TRANSCEIVER FULL 1/1 16SOIC" -> "IC TRANSCEIVER FULL 1/1"."""
+    desc = line.get("desc") or ""
+    q = re.sub(_PKG_WORDS, " ", desc, flags=re.I)
+    q = re.sub(r"\s+", " ", q).strip()
+    if len(q) < 6:
+        q = ((line.get("api_category") or "") + " " + q).strip()
+    return q
+
+
+def _price(part, need, settings):
+    if not part.get("offers"):
+        return None
+    plan = plan_line(part["offers"], need, settings)
+    if not plan:
+        return None
+    item = _item(part, plan, {})
+    item["pkg_text"] = part.get("package") or part.get("desc") or ""
+    return item
+
+
+def _actives(line, providers, need, settings, preferred):
     mpn = line.get("mpn") or line.get("mpn_guess")
     if not mpn:
         return {"kind": "other", "items": [], "note": "Intet MPN at søge alternativer ud fra."}
-    own_pkg = P.parse_package(line.get("api_package") or "") or P.parse_package(line["footprint"].split(":")[-1])
-    subs, errors = [], []
+    own_pkg = P.parse_package(line["footprint"].split(":")[-1]) or P.parse_package(line.get("api_package") or "")
+    errors, items, seen = [], [], {F.key(mpn)}
+    # 1. The distributors' own substitutes (same function, often drop-in)
+    subs = []
     for prov in providers:
         try:
             subs.extend(prov.substitutes(mpn))
         except ProviderError as e:
             errors.append(f"{prov.name}: {e}")
-    items, seen = [], {F.key(mpn)}
-    for s in subs:
+    for s in subs[:12]:
         if not s.get("mpn") or F.key(s["mpn"]) in seen:
             continue
         seen.add(F.key(s["mpn"]))
         priced = None
         for prov in providers:
             try:
-                parts = prov.lookup(s["mpn"])
+                part = next((p for p in prov.lookup(s["mpn"]) if F.key(p["mpn"]) == F.key(s["mpn"])), None)
             except ProviderError:
                 continue
-            part = next((p for p in parts if F.key(p["mpn"]) == F.key(s["mpn"])), None)
-            if part and part.get("offers"):
-                plan = plan_line(part["offers"], need, settings)
-                if plan:
-                    priced = _item(part, plan, {})
-                    priced["pkg_text"] = part.get("package") or part.get("desc") or ""
+            if part:
+                priced = _price(part, need, settings)
+                if priced:
                     break
         if priced is None:
             priced = {"mpn": s["mpn"], "mfr": s.get("mfr", ""), "desc": s.get("desc", ""), "url": s.get("url", ""),
-                      "source": s.get("source", ""), "price": None}
-        priced["relation"] = s.get("type", "")
-        _fit(priced, own_pkg)
+                      "source": s.get("source", ""), "price": None, "stock": s.get("stock")}
+        priced["relation"] = f"Erstatning ifølge {s.get('source') or 'grosisten'}" + (f" ({s['type']})" if s.get("type") else "")
         items.append(priced)
-        if len(items) >= 8:
-            break
-    _pinouts(items, line.get("pin_names") or {})
-    items = _rank(items, preferred, line)
-    # Drop-ins first: same package, then same pinout.
+    # 2. Parts that do the same job, found by searching the description (may need a new footprint/pinout)
+    q = _similar_query(line)
+    if q:
+        for part in _search(providers, q, 40, errors):
+            if F.key(part["mpn"]) in seen or not part.get("offers"):
+                continue
+            seen.add(F.key(part["mpn"]))
+            priced = _price(part, need, settings)
+            if priced:
+                priced["relation"] = "Lignende funktion (søgning)"
+                items.append(priced)
+    for it in items:
+        _fit(it, own_pkg)
+    # Pinout only for those that fit the footprint, best stocked first (datasheets take time to read).
     order = {"ok": 0, "partial": 1, "unknown": 2, "warn": 2, "mismatch": 3}
-    items.sort(key=lambda it: (order[it["fit"]], order[(it.get("pinout") or {}).get("status", "unknown")]))
-    note = "Erstatninger fra grosisternes egne data." + (f" Fejl: {'; '.join(errors)}" if errors else "")
+    items.sort(key=lambda it: (order[it["fit"]], -(it.get("stock") or 0)))
+    _pinouts([it for it in items if it["fit"] in ("ok", "partial")][:10], line.get("pin_names") or {})
+    for it in items:
+        pin = (it.get("pinout") or {}).get("status")
+        if it["fit"] == "ok" and pin == "ok":
+            it["group"] = "drop-in"
+        elif it["fit"] in ("ok", "partial") and pin != "mismatch":
+            it["group"] = "same-package"
+        elif it["fit"] == "unknown" and pin != "mismatch":
+            it["group"] = "check"
+        else:
+            it["group"] = "redesign"
+    items = _rank(items, preferred, line)
+    grp = {"drop-in": 0, "same-package": 1, "check": 2, "redesign": 3}
+    items.sort(key=lambda it: (grp[it["group"]], it.get("price") is None, -(it.get("stock") or 0)))
+    note = f"Erstatninger fra grosisterne og søgning på \"{q}\"." if q else "Erstatninger fra grosisterne."
+    if errors:
+        note += f" Fejl: {'; '.join(errors)}"
     if not items:
-        note = "Ingen erstatninger fundet hos de tilsluttede grosister." + (f" {'; '.join(errors)}" if errors else "")
-    return {"kind": "other", "items": items, "note": note}
+        note = "Ingen alternativer fundet hos de tilsluttede grosister." + (f" {'; '.join(errors)}" if errors else "")
+    return {"kind": "other", "items": items[:40], "note": note}
 
 
 def _pinouts(items, want):

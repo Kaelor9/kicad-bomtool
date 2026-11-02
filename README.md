@@ -18,7 +18,7 @@ python -m bomtool    (alle platforme)
 Programmet åbner i sit eget vindue (Edge WebView2, følger med Windows 10/11). Med `--browser` bruges
 browseren i stedet. Den indbyggede server lytter kun lokalt (127.0.0.1).
 
-Valgfrit: `pip install pypdf openpyxl xlrd` – bedre læsning af datablade, hurtigere .xlsx og gamle binære .xls-filer.
+Valgfrit: `pip install pypdf pypdfium2 openpyxl xlrd pywebview` – bedre læsning af datablade, hurtigere .xlsx og gamle binære .xls-filer.
 (.xlsx virker også uden; Mousers ".xls" er ofte HTML og virker altid.)
 
 ## Hvad den gør
@@ -33,9 +33,26 @@ som også står som kolonner i tabellen:
 | 2 Datablad | Passer footprintet med databladet? | databladets mål-tabel, land pattern og pinout side om side med footprintet, og selve tegningen |
 | 3 Indkøb | Kan den købes som valgt? | grosist-BOM'en, priser og lager pr. sælger |
 
-Er en komponent ikke på lager, udgået eller ikke fundet, søges der automatisk efter **alternativer**
-(samme værdi/pakke, eller samme pakke og pinout for IC'er). Vælger du et alternativ, bruges det i
-indkøbslisten og kurven – KiCad-projektet ændres ikke.
+Øverst giver tre kontrolfliser **overblikket** (fejl/at tjekke pr. trin) – klik på en for kun at se de
+linjer, der har problemer. Kontrolpanelet viser også **printet** med alle komponenter; den valgte lyser op,
+og fejl/advarsler har rød/orange kant. Klik på en komponent på printet for at vælge den.
+
+Footprint-tegningen har skraverede pads og mål (yderkant, gab, padstørrelse, pitch). Oven på kan lægges
+**databladets footprint** – beregnet efter IPC-7351 ud fra databladets pakketabel – eller KiCad-biblioteket,
+og under tegningen vises **udsnittet fra selve databladet** (anbefalet footprint / pakketegning).
+
+**Alternativer** søges automatisk, når en komponent ikke kan købes som valgt (ikke på lager, kun hel rulle,
+udgået, ikke fundet) eller ikke passer på sit footprint. Footprintet er facit, og den valgte komponents specs
+(værdi, spænding, dielektrikum, tolerance) er kravene. IC'er får både grosisternes erstatninger og komponenter
+med samme funktion, grupperet: *passer direkte* · *samme pakke, tjek pinout* · *kræver nyt footprint*.
+Listen kan sorteres efter lager eller pris og filtreres med **minimum lager** (fx 50000). Vælger du et
+alternativ, bruges det i indkøbslisten, kurven og eksporten – KiCad-projektet ændres ikke.
+
+**Eksport:** "Eksportér BOM (Excel)" giver en .xlsx med alle oplysninger pr. linje, kontrolstatus i farver,
+datablad-links, et ark med indkøbslisten og et med udeladte komponenter.
+
+**Spar mest:** prisknæk og MOQ optimeres pr. linje; hele ruller til få stk. tælles ikke med. Angiver du
+*Fragt pr. grosist*, samles indkøbet hos færrest grosister, når det kan betale sig.
 
 1. **Læser projektet** – zip-fil eller hele mappen. Følger hierarkiske ark (også genbrugte ark),
    multi-unit symboler, DNP, "Exclude from BOM", og springer monteringshuller/logoer over.

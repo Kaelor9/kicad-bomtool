@@ -99,6 +99,56 @@ def plan_line(offers, need, settings):
     return {"best": ranked[0][1], "per_seller": {s: kb[1] for s, kb in per_seller.items()}}
 
 
+def consolidate(lines, shipping):
+    """Fewer sellers when the freight saved is worth more than the extra part cost.
+    Moves every line of a seller to the other sellers in use, if that is cheaper in total,
+    and repeats until nothing improves. Changes plan["best"] in place; returns a summary."""
+    if not shipping or shipping <= 0:
+        return None
+    priced = [l for l in lines if l.get("plan") and not l["plan"]["best"].get("impractical")]
+
+    def usable(l, s):
+        b = l["plan"]["per_seller"].get(s)
+        return b if b and not b.get("impractical") else None
+
+    def cost(assign):
+        return sum(usable(l, assign[l["id"]])["total"] for l in priced) + shipping * len(set(assign.values()))
+
+    assign = {l["id"]: l["plan"]["best"]["seller"] for l in priced}
+    start = cost(assign)
+    improved = True
+    while improved:
+        improved = False
+        for s in sorted(set(assign.values()), key=lambda s: sum(1 for v in assign.values() if v == s)):
+            others = set(assign.values()) - {s}
+            trial = dict(assign)
+            ok = True
+            for l in priced:
+                if assign[l["id"]] != s:
+                    continue
+                alts = [(usable(l, o)["total"], o) for o in others if usable(l, o)]
+                if not alts:
+                    ok = False
+                    break
+                trial[l["id"]] = min(alts)[1]
+            if ok and others and cost(trial) < cost(assign) - 0.005:
+                assign, improved = trial, True
+                break
+    moved = 0
+    for l in priced:
+        s = assign[l["id"]]
+        if s != l["plan"]["best"]["seller"]:
+            moved += 1
+            b = dict(usable(l, s))
+            b["suggestions"] = list(b.get("suggestions") or []) + [{
+                "kind": "consider", "qty": b["qty"], "total": b["total"],
+                "text": f"Købes hos {s} i stedet for {l['plan']['best']['seller']}: lidt dyrere her, men det sparer fragt."}]
+            l["plan"]["best"] = b
+    end = cost(assign)
+    return {"sellers": sorted(set(assign.values())), "shipping": shipping, "moved": moved,
+            "saved": round(start - end, 2), "total_with_shipping": round(end, 2)}
+
+
 def totals(lines):
     """Cart totals: cheapest mix, and each seller alone (where it has everything)."""
     mix, per_seller, covered = 0.0, {}, {}

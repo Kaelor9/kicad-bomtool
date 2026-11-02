@@ -152,6 +152,45 @@
     return parts.join("");
   }
 
+  window.fpArcPath = arcPath;
+
+  // The whole board, small: Edge.Cuts outline and every placed part as its outline box.
+  window.renderBoard = function (board, statusOf) {
+    if (!board || !Object.keys(board.parts || {}).length) return "";
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+    for (const g of board.outline || []) {
+      if (g.pts) g.pts.forEach(p => add(p[0], p[1]));
+      else if (g.k === "circle") { const r = Math.hypot(g.x2 - g.x1, g.y2 - g.y1); add(g.x1 - r, g.y1 - r); add(g.x1 + r, g.y1 + r); }
+      else { add(g.x1, g.y1); add(g.x2, g.y2); if (g.xm != null) add(g.xm, g.ym); }
+    }
+    if (!isFinite(x0)) for (const p of Object.values(board.parts)) add(p[0], p[1]);
+    const m = Math.max(x1 - x0, y1 - y0) * 0.03 + 0.5;
+    x0 -= m; y0 -= m; x1 += m; y1 += m;
+    const u = Math.max(x1 - x0, y1 - y0) / 400;
+    const parts = [`<style>.bd-edge{fill:none;stroke:var(--fab);stroke-width:${u * 1.6}}
+      .bd-p{fill:var(--surface2);stroke:var(--muted);stroke-width:${u * 0.8};cursor:pointer}
+      .bd-p.bot{stroke-dasharray:${u * 2} ${u * 1.5};fill:none}
+      .bd-p.warn{stroke:var(--warn);stroke-width:${u * 1.4}} .bd-p.mismatch,.bd-p.missing{stroke:var(--bad);stroke-width:${u * 1.6}}
+      .bd-p.x{opacity:.35;cursor:default}
+      .bd-p.hl{fill:var(--accent);stroke:var(--accent);opacity:1;filter:drop-shadow(0 0 ${u * 3}px var(--accent))}</style>`];
+    for (const g of board.outline || []) {
+      if (g.k === "line") parts.push(`<line class="bd-edge" x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}"/>`);
+      else if (g.k === "rect") parts.push(`<rect class="bd-edge" x="${Math.min(g.x1, g.x2)}" y="${Math.min(g.y1, g.y2)}" width="${Math.abs(g.x2 - g.x1)}" height="${Math.abs(g.y2 - g.y1)}"/>`);
+      else if (g.k === "circle") parts.push(`<circle class="bd-edge" cx="${g.x1}" cy="${g.y1}" r="${Math.hypot(g.x2 - g.x1, g.y2 - g.y1)}"/>`);
+      else if (g.k === "arc") parts.push(`<path class="bd-edge" d="${arcPath(g)}"/>`);
+      else if (g.k === "poly") parts.push(`<polygon class="bd-edge" points="${g.pts.map(p => p.join(",")).join(" ")}"/>`);
+    }
+    // Top side last so it is drawn over the bottom side.
+    const refs = Object.entries(board.parts).sort((a, b) => (b[1][3] ? 1 : 0) - (a[1][3] ? 1 : 0));
+    for (const [ref, [x, y, rot, bottom, cx, cy, hw, hh]] of refs) {
+      const st = statusOf(ref);
+      parts.push(`<rect class="bd-p ${bottom ? "bot" : ""} ${st || "x"}" data-ref="${esc(ref)}" x="${cx - hw}" y="${cy - hh}" width="${Math.max(hw * 2, u * 3)}" height="${Math.max(hh * 2, u * 3)}"
+        transform="translate(${x} ${y}) rotate(${-rot})"><title>${esc(ref)}</title></rect>`);
+    }
+    return `<svg class="board-svg" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${parts.join("")}</svg>`;
+  };
+
   window.renderFootprint = function (geo, refPads, opts = {}) {
     if (!geo || !geo.pads) return `<div class="empty">Ingen footprint-geometri</div>`;
     const id = "fp" + (++uid);
