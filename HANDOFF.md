@@ -1,6 +1,6 @@
 # Overdragelse – KiCad BOM-tjek
 
-Status pr. 2. november 2026, version **v1.6.0**. Skrevet så en ny udvikler (eller en ny AI-session) kan
+Status pr. 2. november 2026, version **v1.6.1**. Skrevet så en ny udvikler (eller en ny AI-session) kan
 fortsætte uden at kende historikken.
 
 Repo: <https://github.com/Kaelor9/kicad-bomtool> (offentligt) · lokalt: `C:\GitHub\kicad-bomtool`
@@ -176,6 +176,8 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 ## 5. Hvad der tidligere ikke har fungeret (og hvordan det blev løst)
 
 **Byg, release og opdatering**
+- **v1.5.0 og v1.6.0 lukkede ved start i programvinduet** (.NET `System.Drawing.Icon` ArgumentException): vinduet fik
+  ikonet som `.png`, men WinForms tager kun `.ico`. Rettet i v1.6.1. Fejlen ses i Windows' hændelseslog under ".NET Runtime".
 - **Chrome/Defender meldte "Virus detected" på `KiCadBOM.exe` (v1.5.0):** falsk alarm, typisk for én-fils
   PyInstaller-programmer (pakker sig ud i temp ved hver start, bootloader delt med malware) uden signatur, der
   opdaterer sig selv. Løst fra v1.6.0 med `--onedir` i en zip og en bootloader, CI selv kompilerer.

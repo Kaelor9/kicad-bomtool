@@ -8,6 +8,8 @@ from . import __version__, updater
 from .server import make_server, serve
 
 TITLE = "KiCad BOM-tjek"
+# The Windows window (WinForms) only takes an .ico - a .png makes it crash at start.
+ICON = "icon.ico" if os.name == "nt" else "icon.png"
 
 
 class WindowApi:
@@ -32,7 +34,7 @@ def run_window(port):
         webview.create_window(f"{TITLE} {__version__}", url, width=1400, height=900, min_size=(900, 600),
                               js_api=WindowApi(), text_select=True)
         webview.start(private_mode=False, storage_path=os.path.join(updater.app_dir(), "webview"),
-                     icon=os.path.join(os.path.dirname(__file__), "web", "icon.png"))
+                     icon=os.path.join(os.path.dirname(__file__), "web", ICON))
     except Exception as e:  # noqa: BLE001 - e.g. no WebView2 runtime: fall back to the browser
         print(f"Kunne ikke åbne programvinduet ({e}) – bruger browseren i stedet.")
         server.shutdown()
