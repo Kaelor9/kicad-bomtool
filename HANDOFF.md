@@ -325,8 +325,8 @@ komponent lyser op.
 - **PDF-godkendelsesrapport** til design review.
 
 ### Kendte begrænsninger
-- **Mouser Search API-nøgle:** brugeren har ansøgt, men ingen bekræftelsesmail er kommet. Mouser er derfor kun
-  testet med falske data og Mouser-BOM-filer.
+- **Mouser Search API-nøgle** er ikke udstedt endnu (se afsnit 3). Mouser er derfor kun testet med falske data og
+  Mouser-BOM-filer.
 - **Mousers fragtgebyr under 550 kr. (150 kr.)** er et skøn og bør tjekkes på mouser.dk. DigiKeys tal er fundet på digikey.dk.
 - **Trykknapper og andre komponenter uden pakkenavn:** DigiKey oplyser hverken pakke eller størrelse. Alternativer kan
   kun pasform-tjekkes, når KiCad har et footprint opkaldt efter varenummeret; ellers står der "Footprint: unknown".
