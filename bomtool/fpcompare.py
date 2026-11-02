@@ -111,6 +111,16 @@ def _nom(d):
     return d["min"] if d["min"] is not None else d["max"]
 
 
+def _span(dims, no_lead):
+    """(lead span, body width). JEDEC: E = span, E1 = body. ST and others: H(E) = span, E = body."""
+    if no_lead:
+        return _v(dims, "E", "D"), _v(dims, "E", "D")
+    h, e, e1 = _v(dims, "H", "HE"), _v(dims, "E"), _v(dims, "E1")
+    if h and e and _nom(h) > _nom(e) and not e1:
+        return h, e
+    return (e or h), e1
+
+
 def compare_dims(feat, dims, family):
     """Rows {what, ds, fp, status, note} comparing the footprint with the package table."""
     rows = []
@@ -140,7 +150,7 @@ def compare_dims(feat, dims, family):
     # Row span: the axis with the most pads in two opposite rows.
     rows_fp = feat["rows"]
     axis = max(rows_fp, key=lambda k: (("inner" in rows_fp[k]), rows_fp[k]["count"])) if rows_fp else None
-    span = _v(dims, "E", "HE", "H") if not no_lead else _v(dims, "E", "D")
+    span, body_w = _span(dims, no_lead)
     L = _v(dims, "L")
     if axis and span and "inner" in rows_fp[axis]:
         r = rows_fp[axis]
@@ -176,7 +186,7 @@ def compare_dims(feat, dims, family):
         add("Eksponeret pad (D2×E2)", " × ".join(_fmt(x) for x in (d2, e2) if x), "ingen", "mismatch",
             "Pakken har en termisk pad, footprintet har ikke.")
     D = _v(dims, "D", "D1")
-    W = _v(dims, "E1") if not no_lead else _v(dims, "E")
+    W = body_w
     if D and W and feat["body"]:
         want = sorted((_nom(D), _nom(W)))
         have = sorted(feat["body"])
@@ -184,6 +194,77 @@ def compare_dims(feat, dims, family):
         add("Krop (D × E1)", f"{_fmt(D)} × {_fmt(W)}", f"{feat['body'][0]:g} × {feat['body'][1]:g} (Fab-lag)",
             "ok" if ok else "warn", "Kroppens omrids på Fab-laget passer." if ok else "Fab-lagets omrids afviger.")
     return rows
+
+
+def ipc_pads(geo, feat, dims, family):
+    """The land pattern IPC-7351 gives for the datasheet's package dimensions, laid out like the
+    footprint (same rows, numbering and orientation) so the two can be drawn on top of each other.
+    Returns {pads, body} in footprint coordinates, or None when the table lacks what's needed."""
+    rows = feat.get("rows") or {}
+    e, b, L = _v(dims, "e"), _v(dims, "b"), _v(dims, "L")
+    no_lead = P.family_group(family) in NO_LEAD or "SON" in (family or "").upper()
+    span, body_w = _span(dims, no_lead)
+    if not (e and b and L and span and rows):
+        return None
+    pitch = _nom(e)
+    # IPC-7351 nominal (density level B) solder fillets: toe, heel, side
+    if no_lead:
+        jt, jh, js = 0.4, 0.0, -0.04
+    else:
+        jt, jh, js = 0.35, 0.35, (0.03 if pitch > 0.625 else 0.01)
+    z = _hi(span) + 2 * jt                       # outer edge to outer edge
+    g = max(0.1, _lo(span) - 2 * _hi(L) - 2 * jh)  # inner gap
+    x = _hi(b) + 2 * js                          # pad width
+    pad_len, centre = (z - g) / 2, (z + g) / 4
+    pads = _numbered(geo.get("pads") or [])
+    areas = sorted(_extent(p)[0] * _extent(p)[1] for p in pads)
+    med = areas[len(areas) // 2] if areas else 0
+    out = []
+    for axis, r in rows.items():
+        if "inner" not in r:
+            continue
+        a, o = ("x", "y") if axis == "x" else ("y", "x")
+        mine = []
+        for p in pads:
+            ex, ey = _extent(p)
+            if ex * ey > 3 * med:
+                continue
+            stretched = ex > ey * 1.1 if axis == "x" else ey > ex * 1.1
+            square = abs(ex - ey) < 1e-6 and (abs(p["x"]) >= abs(p["y"])) == (axis == "x")
+            if stretched or square:
+                mine.append(p)
+        for sign in (-1, 1):
+            side = sorted((p for p in mine if p[a] * sign > 0.01), key=lambda p: p[o])
+            if not side:
+                continue
+            mid = sum(p[o] for p in side) / len(side)
+            gaps = sorted(abs(q[o] - p[o]) for p, q in zip(side, side[1:]))
+            step = pitch * max(1, round(gaps[len(gaps) // 2] / pitch)) if gaps else pitch
+            for i, p in enumerate(side):
+                along = mid + (i - (len(side) - 1) / 2) * step
+                w, h = (pad_len, x) if axis == "x" else (x, pad_len)
+                q = {"num": p["num"], "x": sign * centre if axis == "x" else along,
+                     "y": along if axis == "x" else sign * centre, "w": round(w, 3), "h": round(h, 3),
+                     "angle": 0, "shape": "rect", "type": "smd"}
+                out.append(q)
+    if not out:
+        return None
+    d2, e2 = _v(dims, "D2"), _v(dims, "E2")
+    if d2 and e2 and feat.get("ep"):
+        across, along = (_nom(e2), _nom(d2))
+        axis = next(iter(rows))
+        w, h = (across, along) if axis == "x" else (along, across)
+        big = max(pads, key=lambda p: _extent(p)[0] * _extent(p)[1])
+        out.append({"num": big["num"], "x": 0, "y": 0, "w": round(w, 3), "h": round(h, 3), "angle": 0,
+                    "shape": "rect", "type": "smd"})
+    body = None
+    D, W = _v(dims, "D", "D1"), body_w
+    if D and W:
+        axis = next(iter(rows))
+        bw, bh = (_nom(W), _nom(D)) if axis == "x" else (_nom(D), _nom(W))
+        body = {"w": round(bw, 3), "h": round(bh, 3)}
+    return {"pads": out, "body": body,
+            "rule": f"IPC-7351 (nominel): tå {jt} mm, hæl {jh} mm, side {js} mm"}
 
 
 def land_rows(feat, values):
@@ -233,12 +314,19 @@ def build(line):
     tables = dsdata.dim_tables(text)
     if tables:
         fits = [t for t in tables if t["pkg"] and fp_pkg and P.compare(fp_pkg, t["pkg"])[0] in ("ok", "partial")]
-        table = fits[0] if fits else (tables[0] if len(tables) == 1 else None)
+        # Unlabelled tables: take the one whose pitch matches the footprint.
+        by_pitch = [t for t in tables if feat["pitch"] and t["dims"].get("e") and abs(_nom(t["dims"]["e"]) - feat["pitch"]) < 0.03]
+        table = fits[0] if fits else (by_pitch[0] if len(by_pitch) == 1 else tables[0] if len(tables) == 1 else None)
         if table:
             fam = (table["pkg"] or fp_pkg or {}).get("family") if (table["pkg"] or fp_pkg) else None
-            out["dims"] = {"name": table["name"], "page": table["page"], "sure": bool(fits),
+            name = table["name"] if table["pkg"] or table["label"] else f"tabel s. {table['page']}, valgt ud fra pitch"
+            out["dims"] = {"name": name, "page": table["page"], "sure": bool(fits),
                            "table": {k: _fmt(v) for k, v in table["dims"].items()},
                            "rows": compare_dims(feat, table["dims"], fam)}
+            land = ipc_pads(geo, feat, table["dims"], fam)
+            if land:
+                land["label"] = f"Databladet (s. {table['page']}) → IPC-7351"
+                out["ds_footprint"] = land
             if table["page"] not in out["pages"]:
                 out["pages"].insert(0, table["page"])
         else:

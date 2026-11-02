@@ -232,7 +232,8 @@
     ];
     for (const d of s.dist) tiles.push([`${d.distributor}-BOM`, `${d.ok}/${d.ok + d.problems}`, `${d.problems} afvigelser · ${d.extras} ekstra i kurven`]);
     if (r.totals.lines_priced) {
-      tiles.push(["Billigste mix", money(r.totals.mix, cur), `${r.totals.lines_priced} af ${s.lines} linjer prissat`]);
+      tiles.push(["Billigste mix", money(r.totals.mix, cur), `${r.totals.lines_priced} af ${s.lines} linjer prissat`
+        + (r.totals.lines_unbuyable ? ` · ${r.totals.lines_unbuyable} kun som hel rulle (ikke med)` : "")]);
       for (const [seller, t] of Object.entries(r.totals.per_seller))
         tiles.push([seller, money(t.total, cur), `har ${t.lines} af ${s.lines} linjer`]);
     }
@@ -282,9 +283,9 @@
       return `<tr data-line="${esc(l.id)}">
       <td class="num">${l.qty}</td>
       <td class="refs">${esc(l.refs.join(", "))}</td>
-      <td>${esc(l.value)}${l.desc ? `<div class="sub">${esc(l.desc).slice(0, 60)}</div>` : ""}</td>
-      <td>${mpnCell(l)}${l.mfr ? `<div class="sub">${esc(l.mfr)}</div>` : ""}</td>
-      <td class="mono">${esc(l.footprint.split(":").pop())}</td>
+      <td title="${esc(l.desc || "")}">${esc(l.value && l.value !== "~" ? l.value : (l.desc || "").slice(0, 30))}</td>
+      <td class="clip">${mpnCell(l)}${l.mfr ? `<div class="sub">${esc(l.mfr)}</div>` : ""}</td>
+      <td class="mono clip" title="${esc(l.footprint)}">${esc(l.footprint.split(":").pop())}</td>
       <td class="ctrl">${ctrlPill(fs, STATUS_TXT[fs] || fs, "Symbol ↔ footprint")}</td>
       <td class="ctrl">${ds === "none" ? `<span class="sub">–</span>` : ctrlPill(ds, STATUS_TXT[ds] || ds, dsMsg)}</td>
       <td class="ctrl">${ctrlPill(bs, bs === "ok" ? "OK" : STATUS_TXT[bs] || bs, bsMsg)}${state.choice[l.id] ? `<div class="sub">alternativ</div>` : ""}</td>
@@ -295,8 +296,9 @@
       <tbody>${rows || `<tr><td colspan="8" class="empty">Ingen linjer</td></tr>`}</tbody></table></div>`;
   }
 
-  function fpLegend(fp) {
-    return `<div class="legend"><span><i style="background:var(--pad-fill);border:1px solid var(--pad)"></i>Dit footprint (${esc(fp.geometry_source || "")})</span>${fp.overlay ? `<span><i style="border:2px dashed var(--ref)"></i>${esc(fp.overlay.ref_label)}</span>` : ""}<span><i style="background:var(--bad);border-radius:50%"></i>Pin 1</span></div>`;
+  function fpLegend(fp, refLabel) {
+    const ref = refLabel === undefined ? (fp.overlay && fp.overlay.ref_label) : refLabel;
+    return `<div class="legend"><span><i class="hatch"></i>Dit footprint (${esc(fp.geometry_source || "")})</span>${ref ? `<span><i class="dash"></i>${esc(ref)}</span>` : ""}<span><i style="background:var(--bad);border-radius:50%"></i>Pin 1</span><span style="color:var(--dim)">Mål i mm</span></div>`;
   }
   function checksList(fp) {
     return `<ul class="checks">${(fp.checks || []).map(c => `<li>${pill(c.status)}<span><b>${esc(c.check)}</b><br>${esc(c.msg)}</span></li>`).join("")}</ul>`;
@@ -486,6 +488,7 @@
       return [st, { ok: "Matcher kurven", missing: "Mangler i kurven" }[st] || "Afviger fra kurven"];
     }
     if (l.plan) {
+      if (l.plan.best.impractical) return ["mismatch", `Kun hel rulle (${l.plan.best.qty} stk.)`];
       const s = l.plan.best.stock;
       if (s != null && s < l.need_spare) return [s ? "warn" : "mismatch", s ? `Kun ${s} på lager` : "Ikke på lager"];
       if (l.warnings.some(w => /Livscyklus|NRND|udgået/i.test(w))) return ["warn", "Udgået / NRND"];
@@ -505,50 +508,6 @@
       if (scroll) e.scrollIntoView({ block: "nearest" });
     });
     renderSide();
-  }
-
-  function padBox(p) {
-    const a = ((p.angle || 0) % 180) * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
-    return [(p.w * c + p.h * s) / 2, (p.w * s + p.h * c) / 2];
-  }
-  // Dimension lines for the drawing: row span, gap between rows and pitch.
-  function dimLines(geo, f) {
-    if (!geo || !geo.pads || !f || !f.rows) return [];
-    const out = [];
-    const pads = geo.pads.filter(p => p.num);
-    const area = p => { const [ex, ey] = padBox(p); return ex * ey; };
-    const med = pads.map(area).sort((a, b) => a - b)[Math.floor(pads.length / 2)] || 0;
-    const reg = pads.filter(p => area(p) <= 3 * med);
-    for (const axis of Object.keys(f.rows)) {
-      const r = f.rows[axis];
-      const X = axis === "x";
-      const inRow = reg.filter(p => { const [ex, ey] = padBox(p); return X ? ex > ey * 1.1 || (Math.abs(ex - ey) < 1e-6 && Math.abs(p.x) >= Math.abs(p.y)) : ey > ex * 1.1 || (Math.abs(ex - ey) < 1e-6 && Math.abs(p.y) > Math.abs(p.x)); });
-      if (inRow.length < 2) continue;
-      const lo = Math.min(...inRow.map(p => (X ? p.x : p.y) - padBox(p)[X ? 0 : 1]));
-      const hi = Math.max(...inRow.map(p => (X ? p.x : p.y) + padBox(p)[X ? 0 : 1]));
-      const aMax = Math.max(...inRow.map(p => (X ? p.y + padBox(p)[1] : p.x + padBox(p)[0])));
-      const aMin = Math.min(...inRow.map(p => (X ? p.y - padBox(p)[1] : p.x - padBox(p)[0])));
-      const off = (hi - lo) * 0.12 + 0.3;
-      if (X) out.push({ x1: lo, y1: aMax + off, x2: hi, y2: aMax + off, text: `${r.outer} mm`, side: "below" });
-      else out.push({ x1: aMax + off, y1: lo, x2: aMax + off, y2: hi, text: `${r.outer} mm`, side: "right" });
-      if (r.inner != null && r.inner > 0) {
-        const neg = inRow.filter(p => (X ? p.x : p.y) < 0), pos = inRow.filter(p => (X ? p.x : p.y) > 0);
-        const a = Math.max(...neg.map(p => (X ? p.x : p.y) + padBox(p)[X ? 0 : 1]));
-        const b = Math.min(...pos.map(p => (X ? p.x : p.y) - padBox(p)[X ? 0 : 1]));
-        if (X) out.push({ x1: a, y1: aMin - off, x2: b, y2: aMin - off, text: `${r.inner} mm`, side: "above" });
-        else out.push({ x1: aMin - off, y1: a, x2: aMin - off, y2: b, text: `${r.inner} mm`, side: "left" });
-      }
-      const p1 = inRow.find(p => p.num === "1") || inRow[0];
-      const nb = inRow.filter(q => q !== p1 && Math.abs((X ? q.x : q.y) - (X ? p1.x : p1.y)) < 0.05)
-        .sort((q1, q2) => Math.abs((X ? q1.y : q1.x) - (X ? p1.y : p1.x)) - Math.abs((X ? q2.y : q2.x) - (X ? p1.y : p1.x)))[0];
-      if (nb && f.pitch) {
-        const edge = (X ? p1.x : p1.y) - padBox(p1)[X ? 0 : 1] - off * 0.6;
-        if (X) out.push({ x1: edge, y1: p1.y, x2: edge, y2: nb.y, text: `${f.pitch}`, side: "left" });
-        else out.push({ x1: p1.x, y1: edge, x2: nb.x, y2: edge, text: `${f.pitch}`, side: "above" });
-      }
-      break;
-    }
-    return out;
   }
 
   const mm = v => v == null ? "–" : `${v} mm`;
@@ -598,7 +557,7 @@
     if (p) {
       h += `<div class="tbl-wrap" style="margin-top:8px"><table class="tight"><thead><tr><th>Sælger</th><th class="num">Køb</th><th class="num">Pris</th><th class="num">Lager</th></tr></thead><tbody>
         ${Object.values(p.per_seller).sort((a, b) => a.total - b.total).map(b => `<tr><td>${esc(b.seller)}<div class="sub mono">${b.url ? `<a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.sku)}</a>` : esc(b.sku)} ${esc(b.packaging || "")}</div></td>
-        <td class="num">${b.qty}</td><td class="num">${money(b.total, b.currency)}<div class="sub">${money(b.unit)}/stk.</div></td>
+        <td class="num">${b.qty}</td><td class="num">${money(b.total, b.currency)}<div class="sub">${money(b.unit)}/stk.</div>${b.impractical ? `<div class="sub bad-text">kun hel rulle</div>` : ""}</td>
         <td class="num ${b.stock != null && b.stock < l.need_spare ? "bad-text" : ""}">${b.stock ?? "–"}</td></tr>`).join("")}</tbody></table></div>
         ${p.best.suggestions.map(s => `<div class="sugg ${s.kind}">${esc(s.text)}</div>`).join("")}`;
     } else if (!dists) {
@@ -642,8 +601,15 @@
     if (!(l.id in state.cmp)) loadCompare(l.id);
     if (needsAlt(l) && !state.alts[l.id]) loadAlternatives(l.id);
     const cmp = state.cmp[l.id];
-    const dims = cmp && cmp.features ? dimLines(fp.geometry, cmp.features) : undefined;
     const f = cmp && cmp.features;
+    // Which land pattern to lay on top: the datasheet's (computed from its package table) or the reference
+    // the footprint check used (manufacturer CAD, IPC chip or KiCad library).
+    const dsFp = cmp && cmp.ds_footprint;
+    const refs = [];
+    if (dsFp) refs.push({ key: "ds", label: dsFp.label, pads: dsFp.pads, body: dsFp.body });
+    if (fp.overlay && fp.overlay.ref_pads) refs.push({ key: "lib", label: fp.overlay.ref_label, pads: fp.overlay.ref_pads });
+    refs.push({ key: "none", label: "", pads: null });
+    const cur = refs.find(r => r.key === state.refView) || refs[0];
     side.innerHTML = `
       <div class="side-head">
         <h2>${esc(l.refs.join(", "))}</h2>
@@ -654,8 +620,11 @@
         ${l.suggested_note ? `<div class="notice info">${esc(l.suggested_note)}</div>` : ""}
       </div>
       <section class="step"><h3><span class="n">1</span>Komponent ↔ footprint ${pill(fpStat(l))}</h3>
-        <div class="fp-svg big">${renderFootprint(fp.geometry, fp.overlay && fp.overlay.ref_pads, { details: fp.overlay && fp.overlay.details, dims })}</div>
-        ${fpLegend(fp)}
+        ${refs.length > 1 ? `<div class="row"><span class="sub">Oven på:</span><span class="seg">${refs.map(r => `<button class="${r === cur ? "on" : ""}" data-refview="${r.key}">${{ ds: "Databladet", lib: /producent/.test(r.label) ? "Producent-CAD" : /IPC/.test(r.label) ? "IPC" : "KiCad-bibliotek", none: "Intet" }[r.key]}</button>`).join("")}</span></div>` : ""}
+        <div class="fp-svg big">${renderFootprint(fp.geometry, cur.pads, { details: cur.key === "lib" && fp.overlay ? fp.overlay.details : null, dims: true, refBody: cur.body })}</div>
+        ${fpLegend(fp, cur.label)}
+        ${!dsFp && cmp && !cmp.error ? `<p class="sub">Databladets footprint kan ikke tegnes: ${cmp.dims ? "mål-tabellen mangler ben-målene (b, L, e)." : "databladet har ingen mål-tabel som tekst – se tegningen i trin 2."}</p>` : ""}
+        ${dsFp ? `<p class="sub">Databladets land pattern er beregnet efter ${esc(dsFp.rule)} ud fra pakkemålene.</p>` : ""}
         ${f ? `<p class="sub">Pitch ${mm(f.pitch)} · pad ${f.pad_w ? `${f.pad_w} × ${f.pad_l} mm` : "–"}${Object.values(f.rows).map(r => ` · yder/inder ${r.outer}/${r.inner ?? "–"} mm`).join("")}${f.ep ? ` · termisk pad ${f.ep[0]} × ${f.ep[1]} mm` : ""}${f.body ? ` · krop ${f.body[0]} × ${f.body[1]} mm` : ""}</p>` : ""}
         <ul class="checks">${(fp.checks || []).filter(c => c.check !== "Datablad").map(c => `<li>${pill(c.status)}<span><b>${esc(c.check)}</b><br>${esc(c.msg)}</span></li>`).join("")}</ul>
       </section>
@@ -706,6 +675,8 @@
     if (mo) { mouserCart(mo.dataset.mocart); return; }
     const pg = e.target.closest("#side [data-page]");
     if (pg) { showPage(pg.dataset.page); return; }
+    const rv = e.target.closest("[data-refview]");
+    if (rv) { state.refView = rv.dataset.refview; renderSide(); return; }
     const altBtn = e.target.closest("[data-alt]");
     if (altBtn) { loadAlternatives(altBtn.dataset.alt); return; }
     const choose = e.target.closest("[data-choose]");

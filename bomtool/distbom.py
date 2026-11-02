@@ -175,6 +175,8 @@ def guess_distributor(name, header, lines):
             return "Mouser"
         if sum(bool(re.fullmatch(r"C\d{3,9}", p)) for p in pns) > len(pns) / 2:
             return "LCSC"
+    if not pns and not any(l.get("unit_price") for l in lines):
+        return "BOM-fil"       # e.g. KiCad's own BOM export: no distributor numbers or prices
     return "Ukendt grosist"
 
 
@@ -318,5 +320,6 @@ def check_quantity(needed, spare_needed, ordered):
     if ordered < needed:
         return "mismatch", f"Bestilt {ordered}, men der skal bruges {needed}. Mangler {needed - ordered}."
     if ordered < spare_needed:
-        return "warn", f"Bestilt {ordered} – dækker behovet ({needed}), men ingen reserve (anbefalet {spare_needed})."
+        # Enough to build; the spare parts are only a recommendation.
+        return "ok", f"Bestilt {ordered} – dækker behovet ({needed}). Overvej {spare_needed - ordered} ekstra som reserve."
     return "ok", f"Bestilt {ordered}, behov {needed}" + (f" + reserve = {spare_needed}." if spare_needed > needed else ".")

@@ -211,7 +211,13 @@ def _new_component(ref, props, lib_id, sheet_name, src):
         source=src, dnp=False, in_bom=True, on_board=True, pins=[], warnings=[],
     )
     # MPN and manufacturer typed into each other's fields ("Mfr. No: C&K", "Mfr.: PTS810SJM250SMTR LFS")
-    if mpn and mfr and not re.search(r"\d", mpn) and F.looks_like_mpn(mfr):
+    if mpn and not re.search(r"\d", mpn) and not (mfr and F.looks_like_mpn(mfr)):
+        # A part number always has digits; "KEMET" in the MPN field is the manufacturer.
+        comp["mpn"], comp["mpn_field"] = "", ""
+        comp["mfr"] = mfr or mpn
+        comp["warnings"].append(f"MPN-feltet ('{mpn_field}') indeholder '{mpn}', som er et producentnavn – "
+                                "komponenten mangler et rigtigt varenummer.")
+    elif mpn and mfr and not re.search(r"\d", mpn) and F.looks_like_mpn(mfr):
         comp["mpn"], comp["mfr"] = mfr, mpn
         comp["warnings"].append(f"MPN- og producent-felterne ser ud til at være byttet om ('{mpn_field}' = '{mpn}', "
                                 f"'{mfr_field}' = '{mfr}') – bruger {mfr} som MPN.")

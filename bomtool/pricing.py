@@ -84,8 +84,12 @@ def plan_line(offers, need, settings):
         if not b:
             continue
         in_stock = not isinstance(b["stock"], (int, float)) or b["stock"] >= b["qty"]
+        # A full reel of 2000 when you need 1 is not a real option, unless it costs next to nothing.
+        if b["qty"] > max(need * 10, 100) and b["total"] > 50:
+            b["impractical"] = True
+            b["note"] = f"Kun hel rulle/pakning: mindst {b['moq']} stk. ({b['total']:.0f} {b['currency']})."
         # Digi-Reel has a reeling fee; only use it when nothing else exists.
-        key = (0 if in_stock else 1, 1 if b["reel_fee"] else 0, b["total"])
+        key = (1 if b.get("impractical") else 0, 0 if in_stock else 1, 1 if b["reel_fee"] else 0, b["total"])
         cur = per_seller.get(off["seller"])
         if cur is None or key < cur[0]:
             per_seller[off["seller"]] = (key, b)
@@ -98,15 +102,20 @@ def plan_line(offers, need, settings):
 def totals(lines):
     """Cart totals: cheapest mix, and each seller alone (where it has everything)."""
     mix, per_seller, covered = 0.0, {}, {}
-    count = 0
+    count = unbuyable = 0
     for line in lines:
         plan = line.get("plan")
         if not plan:
             continue
+        if plan["best"].get("impractical"):
+            unbuyable += 1     # only full reels: kept out of the totals, it needs an alternative
+            continue
         count += 1
         mix += plan["best"]["total"]
         for s, b in plan["per_seller"].items():
+            if b.get("impractical"):
+                continue
             per_seller[s] = per_seller.get(s, 0) + b["total"]
             covered[s] = covered.get(s, 0) + 1
-    return {"mix": round(mix, 2), "lines_priced": count,
+    return {"mix": round(mix, 2), "lines_priced": count, "lines_unbuyable": unbuyable,
             "per_seller": {s: {"total": round(v, 2), "lines": covered[s]} for s, v in per_seller.items()}}

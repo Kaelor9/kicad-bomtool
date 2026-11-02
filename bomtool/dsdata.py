@@ -79,14 +79,26 @@ def _rows(lines, j, order, cols, sym_rx):
         sym, rest = rm.group(1), rm.group(2)
         vals = re.findall(_NUM + r"|[-–—]|�+", rest)
         nums = [(_f(v) if re.match(_NUM + "$", v) else None) for v in vals]
-        nums = nums[cols[0]:cols[1]]
+        real_all = [n for n in nums if n is not None]
+        row_order = order
+        half = len(real_all) // 2
+        if cols == (0, None) and len(real_all) >= 4 and len(real_all) % 2 == 0 and real_all[0] and \
+                abs(real_all[0] / 25.4 - real_all[half]) < 0.002 + real_all[half] * 0.03:
+            # mm and inch columns side by side without a header saying so: the second half is the first / 25.4
+            nums, row_order = real_all[:half], (["min", "max"] if half == 2 else ["min", "nom", "max"][:half])
+        elif cols != (0, None) and len(real_all) % 2 == 0 and 0 < len(real_all) < 2 * len(order):
+            # Header says Min/Typ/Max for both units, but this row leaves Typ empty: split the row itself.
+            nums = real_all[:half] if cols[0] == 0 else real_all[half:]
+            row_order = ["min", "max"] if half == 2 else ["nom"]
+        else:
+            nums = nums[cols[0]:cols[1]]
         real = [n for n in nums if n is not None]
         if re.search(r"BSC|REF|TYP\b", rest) or len(real) == 1:
             if real:
                 dims[sym] = {"min": None, "nom": real[0], "max": None}
         elif real:
             d = {"min": None, "nom": None, "max": None}
-            for k, v in zip(order, nums):
+            for k, v in zip(row_order, nums):
                 d[k] = v
             dims[sym] = d
         j += 1
