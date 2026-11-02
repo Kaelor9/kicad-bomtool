@@ -1,6 +1,6 @@
 # Overdragelse – KiCad BOM-tjek
 
-Status pr. 2. november 2026, version **v1.5.0**. Skrevet så en ny udvikler (eller en ny AI-session) kan
+Status pr. 2. november 2026, version **v1.6.0**. Skrevet så en ny udvikler (eller en ny AI-session) kan
 fortsætte uden at kende historikken.
 
 Repo: <https://github.com/Kaelor9/kicad-bomtool> (offentligt) · lokalt: `C:\GitHub\kicad-bomtool`
@@ -36,11 +36,14 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 ### Program og distribution
 - **Eget vindue** (pywebview / Edge WebView2) med lokal server på 127.0.0.1. `--browser` bruger i stedet browseren,
   og `--no-browser` starter kun serveren.
-- **`KiCadBOM.exe`** bygges af GitHub Actions ved hvert `v*`-tag (`.github/workflows/release.yml`). Den indeholder
-  PyInstaller, en sha256-fil og sit eget ikon (`bomtool/web/icon.ico`, tegnes af `tools/make_icon.py`).
+- **`KiCadBOM-windows.zip`** (programmappen: `KiCadBOM.exe` + `_internal`) bygges af GitHub Actions ved hvert
+  `v*`-tag (`.github/workflows/release.yml`) med PyInstaller `--onedir`, en selvkompileret bootloader, en
+  sha256-fil og sit eget ikon (`bomtool/web/icon.ico`, tegnes af `tools/make_icon.py`).
 - **Selvopdatering** fra GitHub Releases (`bomtool/updater.py`):
   - tjekker sha256;
-  - omdøber den kørende exe til `.old` og starter den nye med `PYINSTALLER_RESET_ENVIRONMENT=1`;
+  - pakker zip'en ud i `~/.kicad_bomtool/update`, og et lille `install.cmd` venter på, at programmet lukker,
+    kopierer filerne over programmappen med robocopy `/E` (sletter aldrig noget) og starter den nye version;
+  - gamle én-fils-versioner (≤ 1.5.0) blev opdateret ved at omdøbe den kørende exe til `.old`;
   - "Update now" ligger også under Indstillinger.
 - **Sprog:** engelsk er standard, dansk er valgfrit.
   - Backend-beskeder er skrevet på dansk og oversættes af `bomtool/i18n.py`.
@@ -144,7 +147,8 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 - **Moms og fragt** regnes ens for alle valutaer. Standardværdierne er i DKK.
 - `__version__` i kildekoden er `1.0.0`; den rigtige version sættes af CI ud fra tagget. Kørt fra kilde ser det
   derfor ud, som om der altid findes en opdatering.
-- Ingen kodesignering af exe'en, så Windows SmartScreen kan advare.
+- Ingen kodesignering af exe'en, så Windows SmartScreen kan advare ("Flere oplysninger → Kør alligevel").
+  Kodesignering (ca. 1.000–3.000 kr./år) er den rigtige løsning, hvis det bliver et problem.
 
 ---
 
@@ -172,6 +176,9 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 ## 5. Hvad der tidligere ikke har fungeret (og hvordan det blev løst)
 
 **Byg, release og opdatering**
+- **Chrome/Defender meldte "Virus detected" på `KiCadBOM.exe` (v1.5.0):** falsk alarm, typisk for én-fils
+  PyInstaller-programmer (pakker sig ud i temp ved hver start, bootloader delt med malware) uden signatur, der
+  opdaterer sig selv. Løst fra v1.6.0 med `--onedir` i en zip og en bootloader, CI selv kompilerer.
 - **CI fejlede med `UnicodeEncodeError` (cp1252):** løst med `PYTHONIOENCODING: utf-8` i workflowet.
 - **Opdateringen hang ved genstart af exe'en:** PyInstaller-miljøet blev arvet. Løst med `PYINSTALLER_RESET_ENVIRONMENT=1`.
 - **Fjerne tags på GitHub må ikke slettes** (blev afvist som destruktivt). Lav et nyt versionstag i stedet.
@@ -220,7 +227,7 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
   ```
 
   Brug `--browser` for at køre i browseren. Port 8765, eller `PORT` fra miljøet.
-- **Byg exe lokalt:** `build_exe.bat`.
+- **Byg lokalt:** `build_exe.bat` (giver `dist\KiCadBOM\`, men med PyInstallers standard-bootloader).
 - **Release:**
 
   ```

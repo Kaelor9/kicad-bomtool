@@ -5,8 +5,8 @@ sammenligner med en grosist-BOM og finder priser og alternativer.
 
 ## Start
 
-**Uden Python:** hent `KiCadBOM.exe` under [Releases](https://github.com/Kaelor9/kicad-bomtool/releases)
-og dobbeltklik. Programmet åbner i sit eget vindue og opdaterer sig selv (se nedenfor).
+**Uden Python:** hent `KiCadBOM-windows.zip` under [Releases](https://github.com/Kaelor9/kicad-bomtool/releases),
+pak den ud (fx til `Dokumenter\KiCadBOM`) og dobbeltklik `KiCadBOM.exe` i mappen. Programmet åbner i sit eget vindue og opdaterer sig selv (se nedenfor).
 
 **Med Python 3.10+** – ingen andre pakker er nødvendige:
 
@@ -120,8 +120,9 @@ Uden nøgler virker alt undtagen priser, lager, datablade fra grosist og alterna
 ## Opdateringer
 
 Ved start tjekker programmet [GitHub Releases](https://github.com/Kaelor9/kicad-bomtool/releases) for en
-nyere version og viser et banner. "Opdatér nu" henter den nye `.exe`, kontrollerer SHA-256-checksummen,
-skifter filen ud og genstarter. Indstillinger, nøgler og historik ligger i `%USERPROFILE%\.kicad_bomtool`
+nyere version og viser et banner. "Opdatér nu" henter den nye zip, kontrollerer SHA-256-checksummen,
+kopierer de nye filer over programmappen og genstarter. (Versioner til og med 1.5.0 var én `.exe`, som
+antivirus og Chrome tog fejl af – de skal hente zip'en manuelt én gang.) Indstillinger, nøgler og historik ligger i `%USERPROFILE%\.kicad_bomtool`
 og bevares. Tjekket kan slås fra under Indstillinger.
 
 ### Udgiv en ny version
@@ -131,8 +132,9 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-GitHub Actions (`.github/workflows/release.yml`) kører testene, bygger `KiCadBOM.exe` med versionsnummeret
-fra tagget og lægger den og checksummen på en ny release. Alle der har programmet får den tilbudt.
+GitHub Actions (`.github/workflows/release.yml`) kører testene, bygger programmappen (med en selvbygget
+PyInstaller-bootloader, så antivirus ikke tager fejl af den) med versionsnummeret fra tagget og lægger
+`KiCadBOM-windows.zip` og checksummen på en ny release. Alle der har programmet får den tilbudt.
 
 ## Test
 

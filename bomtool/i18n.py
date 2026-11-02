@@ -28,6 +28,8 @@ T = [
     ("Kunne ikke tjekke for opdateringer ({}).", "Could not check for updates ({})."),
     ("Programmet kører fra kildekoden – opdatér med 'git pull'.", "Running from source – update with 'git pull'."),
     ("Udgivelsen mangler programfilen – hent den manuelt fra GitHub.", "The release has no program file – download it from GitHub."),
+    ("Opdateringen indeholder ugyldige stier – intet er ændret.", "The update contains invalid paths – nothing was changed."),
+    ("Opdateringen mangler programmet – intet er ændret.", "The update does not contain the program – nothing was changed."),
     ("Den hentede fil er beskadiget (checksum passer ikke) – intet er ændret.", "The downloaded file is damaged (checksum mismatch) – nothing was changed."),
     ("Ingen udgivelser fundet endnu.", "No releases found yet."),
     ("Du har allerede den nyeste version.", "You already have the latest version."),

@@ -1,9 +1,14 @@
 """Updates from GitHub Releases.
 
-A release carries KiCadBOM.exe and KiCadBOM.exe.sha256. The running .exe can't
-be overwritten on Windows, but it can be renamed: the old file becomes
-KiCadBOM.old, the verified download takes its name, the new version is started
-and the old file is deleted on the next start.
+A release carries KiCadBOM-windows.zip (the program folder: KiCadBOM.exe + _internal) and its
+.sha256. The folder build is used instead of a single .exe because antivirus programs and Chrome
+flag single-file PyInstaller programs, which unpack themselves to a temp folder at every start.
+
+The running program can't overwrite its own files, so the verified zip is unpacked next to the
+user data and a small script copies it over the program folder once this process has exited,
+then starts the new version.
+
+Older single-file versions (KiCadBOM.exe) are still updated by swapping the .exe.
 """
 import hashlib
 import json
@@ -14,13 +19,15 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 
 from .net import urlopen
 from . import __version__
 from .config import app_dir
 
 REPO = "Kaelor9/kicad-bomtool"
-ASSET = "KiCadBOM.exe"
+ASSET = "KiCadBOM.exe"            # single-file build (up to v1.5.0)
+ZIP_ASSET = "KiCadBOM-windows.zip"  # folder build
 CHECK_EVERY = 6 * 3600
 _cache = {"time": 0, "info": None}
 
@@ -31,6 +38,11 @@ def _ver(tag):
 
 def frozen():
     return bool(getattr(sys, "frozen", False))
+
+
+def folder_build():
+    """Running as KiCadBOM.exe next to its _internal folder (not the single-file build)?"""
+    return frozen() and os.path.isdir(os.path.join(os.path.dirname(sys.executable), "_internal"))
 
 
 def _get(url, accept="application/vnd.github+json"):
@@ -51,7 +63,10 @@ def check(force=False):
         info["notes"] = (rel.get("body") or "")[:4000]
         info["page"] = rel.get("html_url", "")
         assets = {a["name"]: a["browser_download_url"] for a in rel.get("assets") or []}
-        info["exe_url"], info["sha_url"] = assets.get(ASSET), assets.get(ASSET + ".sha256")
+        name = ZIP_ASSET if folder_build() or ZIP_ASSET in assets else ASSET
+        if not folder_build() and name == ZIP_ASSET:
+            info["can_install"] = False     # a single .exe can't become a folder by itself
+        info["exe_url"], info["sha_url"] = assets.get(name), assets.get(name + ".sha256")
         info["newer"] = _ver(info["latest"]) > _ver(__version__)
         if not (info["exe_url"] and info["sha_url"]):
             info["can_install"] = False
@@ -77,6 +92,8 @@ def install():
     got = hashlib.sha256(data).hexdigest()
     if got != want:
         raise ValueError("Den hentede fil er beskadiget (checksum passer ikke) – intet er ændret.")
+    if folder_build():
+        return _install_folder(data, info["latest"])
     exe = sys.executable
     new, old = exe + ".new", os.path.splitext(exe)[0] + ".old"
     with open(new, "wb") as fh:
@@ -97,8 +114,45 @@ def install():
     return f"Opdateret til {info['latest']} – starter igen."
 
 
+def _install_folder(data, version):
+    """Unpack the new program folder and let a script copy it over this one after we exit."""
+    import io  # noqa: PLC0415
+    import shutil  # noqa: PLC0415
+    work = os.path.join(app_dir(), "update")
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for n in z.namelist():   # nothing may land outside the update folder
+            if n.startswith(("/", "\\")) or ".." in n.replace("\\", "/").split("/"):
+                raise ValueError("Opdateringen indeholder ugyldige stier – intet er ændret.")
+        z.extractall(work)
+    src = next((r for r, _, fs in os.walk(work) if "KiCadBOM.exe" in fs), None)
+    if not src or not os.path.isdir(os.path.join(src, "_internal")):
+        raise ValueError("Opdateringen mangler programmet – intet er ændret.")
+    dst = os.path.dirname(sys.executable)
+    script = os.path.join(work, "install.cmd")
+    # Wait for this process to end, copy the new files over (never deletes anything in the
+    # program folder), start the new version.
+    with open(script, "w", encoding="mbcs" if os.name == "nt" else "utf-8") as fh:
+        fh.write(f"""@echo off
+:wait
+tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)
+robocopy "{src}" "{dst}" /E /R:10 /W:1 /NFL /NDL /NJH /NJS /NP >nul
+start "" "{os.path.join(dst, "KiCadBOM.exe")}"
+""")
+    env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+    subprocess.Popen(["cmd", "/c", script], close_fds=True, env=env, cwd=work, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return f"Opdateret til {version} – starter igen."
+
+
 def cleanup():
     """Remove the previous version left behind by an update."""
+    if folder_build():
+        import shutil  # noqa: PLC0415
+        shutil.rmtree(os.path.join(app_dir(), "update"), ignore_errors=True)
+        return
     if frozen():
         old = os.path.splitext(sys.executable)[0] + ".old"
         for _ in range(10):
@@ -110,4 +164,4 @@ def cleanup():
                 time.sleep(0.5)   # the old process may still be closing
 
 
-__all__ = ["check", "install", "cleanup", "app_dir", "REPO"]
+__all__ = ["check", "install", "cleanup", "folder_build", "app_dir", "REPO"]

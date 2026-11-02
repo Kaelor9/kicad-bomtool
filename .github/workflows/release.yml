@@ -1,6 +1,11 @@
-# Builds KiCadBOM.exe and publishes a GitHub Release when a version tag is pushed:
+# Builds the program folder (KiCadBOM.exe + _internal) as KiCadBOM-windows.zip and publishes a
+# GitHub Release when a version tag is pushed:
 #   git tag v1.1.0 && git push origin v1.1.0
-# The program's updater looks for KiCadBOM.exe and KiCadBOM.exe.sha256 on the latest release.
+# The program's updater looks for KiCadBOM-windows.zip and KiCadBOM-windows.zip.sha256.
+#
+# Why a folder and an own-compiled bootloader: antivirus programs and Chrome flag single-file
+# PyInstaller programs (they unpack themselves to a temp folder at every start), and the stock
+# bootloader is shared with malware that was built the same way.
 name: Release
 
 on:
@@ -22,8 +27,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install build tools
-        run: python -m pip install --upgrade pip pyinstaller pypdf openpyxl pywebview certifi pypdfium2 pillow
+      - name: Install build tools (PyInstaller with its bootloader compiled here)
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install --no-binary pyinstaller pyinstaller==6.11.1
+          python -m pip install pypdf openpyxl pywebview certifi pypdfium2 pillow
 
       - name: Unit tests
         run: python -m tests.test_units
@@ -32,23 +42,24 @@ jobs:
         shell: bash
         run: echo "__version__ = \"${GITHUB_REF_NAME#v}\"" > bomtool/__init__.py
 
-      - name: Build exe
+      - name: Build program folder
         run: >
-          python -m PyInstaller --noconfirm --onefile --windowed --icon bomtool/web/icon.ico --name KiCadBOM
+          python -m PyInstaller --noconfirm --onedir --windowed --icon bomtool/web/icon.ico --name KiCadBOM
           --add-data "bomtool/web;bomtool/web"
           --hidden-import pypdf --hidden-import openpyxl --hidden-import certifi --hidden-import pypdfium2
           run_bomtool.py
 
-      - name: Checksum
-        shell: bash
+      - name: Zip and checksum
+        shell: pwsh
         run: |
-          cd dist
-          sha256sum KiCadBOM.exe | awk '{print $1 "  KiCadBOM.exe"}' > KiCadBOM.exe.sha256
-          cat KiCadBOM.exe.sha256
+          Compress-Archive -Path dist/KiCadBOM -DestinationPath dist/KiCadBOM-windows.zip
+          $h = (Get-FileHash dist/KiCadBOM-windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$h  KiCadBOM-windows.zip" | Out-File -Encoding ascii dist/KiCadBOM-windows.zip.sha256
+          Get-Content dist/KiCadBOM-windows.zip.sha256
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/KiCadBOM.exe
-            dist/KiCadBOM.exe.sha256
+            dist/KiCadBOM-windows.zip
+            dist/KiCadBOM-windows.zip.sha256
           generate_release_notes: true
