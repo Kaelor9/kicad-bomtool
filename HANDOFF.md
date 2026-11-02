@@ -1,13 +1,44 @@
 # Overdragelse – KiCad BOM-tjek
 
-Status pr. 2. november 2026, version **v1.6.1**. Skrevet så en ny udvikler (eller en ny AI-session) kan
-fortsætte uden at kende historikken.
+> **Dette dokument er projektets index.** Det er skrevet, så en ny udvikler eller en ny AI-session kan samle
+> projektet op uden at kende historikken. Læs afsnit 0–3 først. De øvrige afsnit er opslag.
 
-Repo: <https://github.com/Kaelor9/kicad-bomtool> (offentligt) · lokalt: `C:\GitHub\kicad-bomtool`
+Repo: <https://github.com/Kaelor9/kicad-bomtool> (offentligt) · Brugerens lokale klon: `C:\GitHub\kicad-bomtool`
 
 ---
 
-## 1. Målet med programmet
+## 0. Regler for at arbejde i projektet (gælder også for AI)
+
+1. **Læs HANDOFF.md før du ændrer noget.** Brug den som index: afsnit 4 viser, hvor koden ligger, og afsnit 3
+   viser, hvad der er i gang.
+2. **Opdatér HANDOFF.md løbende, i samme commit som ændringen.** Det betyder:
+   - **afsnit 1 (Status):** version, og hvad der er udgivet og hvad der ikke er;
+   - **afsnit 3 (Åbne sager):** hvad der er i gang, og hvad der venter på brugeren;
+   - det relevante faglige afsnit (5–9), hvis noget er bygget, valgt eller løst;
+   - **afsnit 11 (Ændringslog):** én linje pr. ændring, med den nyeste øverst.
+3. **Skriv fejl og deres løsning i afsnit 8**, så de ikke bliver gentaget.
+4. **Skriv brugerens beslutninger i afsnit 7** med begrundelse. Spørg, før en beslutning bliver omgjort.
+5. **Hold strukturen.** Tilføj til de eksisterende afsnit i stedet for at lave nye afsnit nederst.
+   Fjern det, der ikke længere er sandt. Dokumentet skal beskrive nuet, og historikken hører til i afsnit 8 og 11.
+6. **Sprog:** brugeren skriver dansk, så dette dokument er på dansk. Kode, kommentarer og commit-beskeder er
+   på engelsk. Commit-beskeder slutter med `Co-Authored-By: …`-linjen (se afsnit 10).
+7. **Udgivelse er brugerens valg.** Et `v*`-tag udgiver til alle brugere (selvopdatering), så tag kun, når
+   brugeren beder om det. Slet aldrig tags, der allerede er pushet.
+
+---
+
+## 1. Status lige nu
+
+| | |
+|---|---|
+| Seneste udgivelse | **v1.6.1** (2. nov. 2026) – `KiCadBOM-windows.zip` |
+| På branch, ikke udgivet | Rettelse: programvinduet falder tilbage til browseren (se afsnit 3). Skal udgives som **v1.6.2** |
+| Version i kildekoden | `bomtool/__init__.py` siger `1.0.0`. CI sætter den rigtige ud fra tagget |
+| Tests | `python -m tests.test_units` → ALL PASSED |
+
+---
+
+## 2. Målet med programmet
 
 Et **kontrolprogram** til KiCad-projekter (KiCad 8 og 10, men 6–10 kan læses). Det skal kontrollere, at:
 
@@ -25,25 +56,135 @@ Derudover skal det:
 - **finde alternativer**, når en del ikke kan købes, også ikke-pin-kompatible til udgåede IC'er;
 - **give et lynhurtigt overblik** og kunne **eksportere en pæn BOM** (Excel) med alle oplysninger.
 
-Brugeroplevelsen: tabellen med komponenter i midten, og **et kontrolpanel til højre** (ingen popup-vinduer,
-der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alternatives*, plus en lille
-**printvisning**, hvor den valgte komponent lyser op.
+Brugeroplevelsen er et **rigtigt program i eget vindue** (ikke en browserfane). Tabellen med komponenter er i
+midten, og **et kontrolpanel ligger til højre** (ingen popup-vinduer, der dækker tabellen) med fanerne
+*Footprint · Datasheet · Purchase · Alternatives*. Derudover er der en lille **printvisning**, hvor den valgte
+komponent lyser op.
 
 ---
 
-## 2. Hvad der er lavet
+## 3. Åbne sager / næste skridt
+
+### I gang
+- **"Programmet åbner i browseren i stedet for i sit eget vindue"**, rapporteret 2. nov. 2026 på v1.6.x.
+  - **Mest sandsynlige årsag:** siden v1.6.0 er programmet en zip. Pakkes den ud med Stifinder, får alle
+    filer mærket "hentet fra internettet" (Zone.Identifier). .NET nægter så at indlæse `Python.Runtime.dll`
+    og WebView2-DLL'erne. Undtagelsen blev fanget, og programmet faldt stille tilbage til browseren.
+    One-file-exe'en (≤ v1.5.0) pakkede sig selv ud i temp uden mærke, så den havde ikke problemet.
+  - **Rettet på branch (ikke udgivet):** `bomtool/__main__.py`
+    - fjerner mærket fra programmappens egne filer ved start (`unblock_program_folder`);
+    - sender ikke længere en ikonfil til vinduet på Windows. pywebview bruger så exe'ens indbyggede ikon,
+      og den crash-risiko, der lå bag v1.6.0/v1.6.1, er væk;
+    - skriver årsagen til `%USERPROFILE%\.kicad_bomtool\window.log`, når vinduet ikke kan åbnes
+      (exe'en har ingen konsol).
+  - **Mangler:**
+    1. Brugeren skal udgive v1.6.2 (`git tag v1.6.2 && git push origin v1.6.2` fra `main`, efter merge).
+    2. Bekræft på Windows, at vinduet åbner.
+    3. Åbner det stadig i browseren, så send indholdet af `window.log`, så den rigtige årsag kendes.
+  - **Midlertidig løsning for brugeren:** højreklik zip'en → Egenskaber → "Fjern blokering", inden den
+    pakkes ud. Eller tryk "Update now", som også virker i browseren.
+
+### Venter på brugeren
+- Mouser Search API-nøgle (ansøgt, intet svar endnu).
+
+---
+
+## 4. Kodekort (hvor ligger hvad)
+
+**Start og indpakning**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/__main__.py` | Start. Åbner eget vindue (pywebview), og browseren er fallback. Her ligger også unblock af zip-filer og `window.log`. |
+| `run_bomtool.py` | Indgang for PyInstaller (exe'en). |
+| `start.bat` | Kør fra kilde på Windows (`py -3 -m bomtool`). |
+| `build_exe.bat` | Lokalt PyInstaller-byg (`dist\KiCadBOM\`). |
+| `.github/workflows/release.yml` | CI. Ved `v*`-tag: tests → egen bootloader → `--onedir` → zip + sha256 → GitHub Release. |
+| `bomtool/updater.py` | Selvopdatering fra GitHub Releases. Zip og `install.cmd` til mappe-bygget; exe-swap til de gamle én-fils-versioner. |
+| `bomtool/server.py` | Lokal HTTP-server (127.0.0.1) og alle `/api/*`-adresser. |
+| `bomtool/config.py` | Indstillinger og nøgler i `~/.kicad_bomtool/config.json` (`app_dir()`, `cache_dir()`). |
+| `bomtool/net.py` | `urlopen` med fallback CA-bundle (certifi). |
+| `bomtool/i18n.py` | Oversætter backend-beskeder fra dansk til engelsk. |
+| `tools/make_icon.py` | Tegner `bomtool/web/icon.ico` og `icon.png`. |
+
+**Læsning af projektet**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/vfs.py` | Uploadet projekt (zip eller filer) i hukommelsen. |
+| `bomtool/sexpr.py` | Tolerant S-expression-parser (KiCad 6–10). |
+| `bomtool/kicad.py` | Skematik-hierarki, PCB-footprints og libs, samlet til en flad komponentliste. |
+| `bomtool/fields.py` | Finder MPN, producent og varenumre i felter og parser værdier ("4k7", "100nF 50V X7R"). |
+| `bomtool/bom.py` | Grupperer komponenter i BOM-linjer. |
+| `bomtool/analyze.py` | Hele analyse-pipelinen (baggrundstråd med fremdrift og stop). |
+
+**Kontrol 1: komponent ↔ footprint**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/packages.py` | Normaliserer og sammenligner pakkenavne (IPC-7351, chip-størrelser …). |
+| `bomtool/footprint.py` | Footprint-geometri, reference-sammenligning og pin/pad-tjek. |
+| `bomtool/fplib.py` | Indeks over KiCads ca. 15.100 footprints (genkendelse ud fra geometri og `by_mpn`). |
+
+**Kontrol 2: footprint ↔ datablad**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/datasheet.py` | Henter datablad og tjekker, om det er det rigtige, og pakkenavne. |
+| `bomtool/dsdata.py` | Mål-, pad- og pin-tabeller fra databladets tekst. |
+| `bomtool/dsimage.py` | Udsnit af databladets tegninger (pypdfium2, global lås). |
+| `bomtool/fpcompare.py` | Sammenligningen: footprint mod datablad og beregnet IPC-landpattern. |
+
+**Kontrol 3: køb**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/providers.py` | DigiKey v4, Mouser og Nexar, normaliseret til én `Part`. |
+| `bomtool/distbom.py` | Indlæser og matcher grosist-BOM'er. |
+| `bomtool/tables.py` | Læser CSV, XLSX, XLS og HTML-xls til rækker. |
+| `bomtool/pricing.py` | Prisknæk, MOQ, fragt og moms, og konsolidering af grosister. |
+| `bomtool/alternatives.py` | Alternative dele. |
+
+**Resultater og brugerflade**
+
+| Fil | Indhold |
+|---|---|
+| `bomtool/export.py` | Excel-BOM. |
+| `bomtool/history.py` | Gemte analyser og forskelle mellem to analyser. |
+| `bomtool/web/index.html`, `app.js`, `style.css` | Brugerfladen. |
+| `bomtool/web/footprint.js` | Footprint-tegning og `BoardView` (printvisning). |
+| `bomtool/web/i18n.js` | Danske UI-tekster (UI'et er skrevet på engelsk). |
+
+**Tests**
+
+| Fil | Indhold |
+|---|---|
+| `tests/test_units.py` | Enhedstests. |
+| `tests/test_pipeline.py` | End-to-end med en falsk grosist. |
+
+**Brugerdata** ligger i `%USERPROFILE%\.kicad_bomtool\` (eller `BOMTOOL_HOME`): `config.json`, `cache/`,
+`history/`, `webview/` (vinduets lager), `update/` (midlertidig) og `window.log`.
+
+---
+
+## 5. Hvad der er lavet
 
 ### Program og distribution
 - **Eget vindue** (pywebview / Edge WebView2) med lokal server på 127.0.0.1. `--browser` bruger i stedet browseren,
-  og `--no-browser` starter kun serveren.
+  og `--no-browser` starter kun serveren. Hvis vinduet ikke kan åbnes, bruges browseren, og årsagen skrives i
+  `window.log`.
 - **`KiCadBOM-windows.zip`** (programmappen: `KiCadBOM.exe` + `_internal`) bygges af GitHub Actions ved hvert
   `v*`-tag (`.github/workflows/release.yml`) med PyInstaller `--onedir`, en selvkompileret bootloader, en
-  sha256-fil og sit eget ikon (`bomtool/web/icon.ico`, tegnes af `tools/make_icon.py`).
+  sha256-fil og sit eget ikon (`bomtool/web/icon.ico`, tegnes af `tools/make_icon.py`). Ikonet sidder i exe'en,
+  og vinduet tager det derfra.
+- Ved start fjernes Windows' "hentet fra internettet"-mærke fra programmappens egne filer, så .NET vil
+  indlæse vinduets DLL'er.
 - **Selvopdatering** fra GitHub Releases (`bomtool/updater.py`):
   - tjekker sha256;
   - pakker zip'en ud i `~/.kicad_bomtool/update`, og et lille `install.cmd` venter på, at programmet lukker,
     kopierer filerne over programmappen med robocopy `/E` (sletter aldrig noget) og starter den nye version;
-  - gamle én-fils-versioner (≤ 1.5.0) blev opdateret ved at omdøbe den kørende exe til `.old`;
+  - gamle én-fils-versioner (≤ 1.5.0) blev opdateret ved at omdøbe den kørende exe til `.old`. De kan ikke
+    selv blive til en mappe, så de skal hente zip'en manuelt én gang;
   - "Update now" ligger også under Indstillinger.
 - **Sprog:** engelsk er standard, dansk er valgfrit.
   - Backend-beskeder er skrevet på dansk og oversættes af `bomtool/i18n.py`.
@@ -118,7 +259,7 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 
 ---
 
-## 3. Hvad der mangler / idéer
+## 6. Hvad der mangler / idéer
 
 ### Ikke bygget (foreslået, men ikke valgt af brugeren endnu)
 - **Skrive det valgte alternativ tilbage til KiCad** (MPN/felter i `.kicad_sch`). I dag ændrer et valg kun
@@ -149,15 +290,19 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
   derfor ud, som om der altid findes en opdatering.
 - Ingen kodesignering af exe'en, så Windows SmartScreen kan advare ("Flere oplysninger → Kør alligevel").
   Kodesignering (ca. 1.000–3.000 kr./år) er den rigtige løsning, hvis det bliver et problem.
+- **Programvinduet kan ikke testes i en Linux-container** (WinForms/.NET/WebView2). Ændringer i
+  `bomtool/__main__.py` skal bekræftes af brugeren på Windows.
 
 ---
 
-## 4. Valg der er truffet (og hvorfor)
+## 7. Valg der er truffet (og hvorfor)
 
 | Valg | Begrundelse |
 |---|---|
-| **Eget programvindue (pywebview)** frem for ren browser-app ("option A") | Føles som et rigtigt program; browseren er fallback. |
+| **Eget programvindue (pywebview)** frem for ren browser-app ("option A") | Føles som et rigtigt program; browseren er kun fallback. |
 | Python standardbibliotek + valgfri pakker | Kører uden installation; exe'en indeholder pypdf, pypdfium2, pillow, openpyxl, pywebview og certifi. |
+| **Programmappe i zip (`--onedir`)** i stedet for én exe | Antivirus/Chrome meldte én-fils-exe'en som virus (se afsnit 8). |
+| Vinduet får ikke en ikonfil på Windows | pywebview tager exe'ens indbyggede ikon. Ikonfiler fik .NET til at crashe. |
 | **Panel til højre for tabellen, ingen popup** | Brugerens krav: compare-visningen må ikke skygge for tabellen. |
 | **Alternativer for en forkert valgt del:** footprintet er facit, specs fra den valgte del | Brugerens valg: printet er lavet, så delen skal passe til footprintet. |
 | **Alternativer sorteres efter største lager**, filter "Minimum stock", derefter billigst | Brugerens ønske. |
@@ -170,14 +315,21 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 | Offentligt GitHub-repo; releases via tags | Selvopdatering kræver offentlige releases. |
 | API-nøgler gemmes kun lokalt i `~/.kicad_bomtool/config.json` | Sikkerhed: nøgler sendes kun til grosisternes egne API'er og aldrig i chat. |
 | User-Agent forfalskes ikke for at komme forbi bot-beskyttelse | Etik og vilkår. |
+| **HANDOFF.md er index og opdateres i hver ændring** | Brugerens ønske, så en anden AI kan samle projektet op. |
 
 ---
 
-## 5. Hvad der tidligere ikke har fungeret (og hvordan det blev løst)
+## 8. Hvad der tidligere ikke har fungeret (og hvordan det blev løst)
 
 **Byg, release og opdatering**
+- **v1.6.x åbnede i browseren i stedet for eget vindue:** sandsynligvis fordi Stifinder mærker de udpakkede
+  zip-filer som "fra internettet", og så vil .NET ikke indlæse DLL'erne. Undtagelsen blev fanget uden spor.
+  Rettet på branch (afventer v1.6.2): unblock ved start og `window.log`. Se afsnit 3.
 - **v1.5.0 og v1.6.0 lukkede ved start i programvinduet** (.NET `System.Drawing.Icon` ArgumentException): vinduet fik
-  ikonet som `.png`, men WinForms tager kun `.ico`. Rettet i v1.6.1. Fejlen ses i Windows' hændelseslog under ".NET Runtime".
+  ikonet som `.png`, men WinForms tager kun `.ico`. v1.6.1 gav en `.ico` i stedet. Den `.ico` består af
+  PNG-rammer, som .NET Framework heller ikke altid accepterer, så nu gives der slet ingen ikonfil på Windows.
+  Fejlen ses i Windows' hændelseslog under ".NET Runtime". Bemærk, at en .NET-undtagelse i vinduets tråd crasher
+  programmet, mens en Python-undtagelse i `webview.start` giver browser-fallback.
 - **Chrome/Defender meldte "Virus detected" på `KiCadBOM.exe` (v1.5.0):** falsk alarm, typisk for én-fils
   PyInstaller-programmer (pakker sig ud i temp ved hver start, bootloader delt med malware) uden signatur, der
   opdaterer sig selv. Løst fra v1.6.0 med `--onedir` i en zip og en bootloader, CI selv kompilerer.
@@ -216,28 +368,14 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
 
 **Brugerflade**
 - **Printvisningens streger blev for tykke ved zoom:** bruger nu non-scaling strokes.
+
+**Arbejdsgang**
 - **Heredoc i bash ødelagde `\b` og `\d` i patch-scripts:** skriv scripts med en fil-editor, og tjek for `\x08` bagefter.
 
 ---
 
-## 6. Praktisk
+## 9. Brugerens testprojekter og fund, der skal blive ved med at virke
 
-- **Kør fra kilde:**
-
-  ```
-  python -m bomtool
-  ```
-
-  Brug `--browser` for at køre i browseren. Port 8765, eller `PORT` fra miljøet.
-- **Byg lokalt:** `build_exe.bat` (giver `dist\KiCadBOM\`, men med PyInstallers standard-bootloader).
-- **Release:**
-
-  ```
-  git tag vX.Y.Z && git push origin vX.Y.Z
-  ```
-
-  CI bygger og udgiver, og programmet tilbyder derefter opdateringen.
-- **Commit-beskeder** slutter med `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Brugerens testprojekter** ligger i `C:\GitHub\` (alle KiCad 8):
   - **ESP32-S3-WROOM-1-N8R8 dev bard** er hovedtestprojektet. Mappen uden "dev bard" har kun `.kicad_pro` og backups.
   - LT3756-LUMOS-DRIVER, Marine-RGB-Light-Controller, STM32-BUILD-STM32G431CBT6 og new-lumos-driver.
@@ -252,3 +390,44 @@ der dækker tabellen) med fanerne *Footprint · Datasheet · Purchase · Alterna
   | BOOT1 | byttede felter |
   | Lumos J1/J2 | passer ikke med Keystone-terminaler |
   | LT3756 | PCB'et passer ikke med skematikken |
+
+---
+
+## 10. Praktisk
+
+- **Kør fra kilde:**
+
+  ```
+  python -m bomtool
+  ```
+
+  Kræver `pip install pywebview` for eget vindue; ellers bruges browseren. Brug `--browser` for at tvinge
+  browseren. Port 8765, eller `PORT` fra miljøet.
+- **Byg lokalt:** `build_exe.bat` (giver `dist\KiCadBOM\`, men med PyInstallers standard-bootloader).
+- **Release** (kun når brugeren beder om det):
+
+  ```
+  git tag vX.Y.Z && git push origin vX.Y.Z
+  ```
+
+  CI bygger og udgiver, og programmet tilbyder derefter opdateringen.
+- **Fejlfinding, hvis vinduet ikke åbner:** se `%USERPROFILE%\.kicad_bomtool\window.log`. Ved crash: se Windows'
+  Logbog → Windows-logfiler → Program → ".NET Runtime"/"Application Error".
+- **Commit-beskeder** er på engelsk og slutter med `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **AI-sessioner i skyen** arbejder på en `claude/*`-branch. Brugeren merger til `main` og tagger.
+
+---
+
+## 11. Ændringslog
+
+Nyeste øverst. Én linje pr. ændring: dato · version/branch · hvad og hvorfor.
+
+- 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Programvinduet faldt tilbage til browseren på v1.6.x.
+  Nu unblockes zip-udpakkede filer, Windows-vinduet får ikke en ikonfil, og fejlen logges i `window.log`.
+  HANDOFF.md er omorganiseret til index (regler, status, åbne sager, kodekort, ændringslog), og `CLAUDE.md`
+  peger hertil.
+- 2026-11-02 · v1.6.1 · Vinduesikon som `.ico` (en `.png` crashede vinduet ved start).
+- 2026-11-02 · v1.6.0 · Udgives som programmappe i zip med selvbygget bootloader (falsk virus-alarm).
+- 2026-11-02 · v1.5.0 · Reel ordrepris, datablad-footprint ved siden af brugerens, programikon.
+- Før det: v1.0.0–v1.4.0 (1.–2. nov. 2026). Kontrollerne, brugerfladen og selvopdateringen blev bygget.
+  Se `git log`.

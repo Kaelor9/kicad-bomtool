@@ -7,6 +7,7 @@ sammenligner med en grosist-BOM og finder priser og alternativer.
 
 **Uden Python:** hent `KiCadBOM-windows.zip` under [Releases](https://github.com/Kaelor9/kicad-bomtool/releases),
 pak den ud (fx til `Dokumenter\KiCadBOM`) og dobbeltklik `KiCadBOM.exe` i mappen. Programmet åbner i sit eget vindue og opdaterer sig selv (se nedenfor).
+Åbner det i browseren i stedet for i sit eget vindue, står årsagen i `%USERPROFILE%\.kicad_bomtool\window.log`.
 
 **Med Python 3.10+** – ingen andre pakker er nødvendige:
 
