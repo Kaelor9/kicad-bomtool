@@ -5,7 +5,7 @@ import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
-from . import alternatives, bom, datasheet, distbom, footprint, packages as P, pricing
+from . import alternatives, bom, datasheet, distbom, footprint, fplib, packages as P, pricing
 from . import fields as F
 from .kicad import Project, load_kicad_mod
 from .providers import ProviderError, make_providers
@@ -75,6 +75,10 @@ def _best_part(parts, wanted):
         if len(w) >= 6 and (k.startswith(w) or w.startswith(k)) and abs(len(k) - len(w)) <= 4:
             return p
     return None
+
+
+class Cancelled(Exception):
+    """Raised from the progress callback when the user stops the analysis."""
 
 
 class Analysis:
@@ -170,7 +174,8 @@ class Analysis:
             "providers": [p.name for p in self.providers], "settings": self.settings,
             # For the board view: outline + each placed part [x, y, rot, bottom, cx, cy, half w, half h]
             "board": {"outline": project.board_outline,
-                      "parts": {c["ref"]: c["pcb_pos"] for c in project.components if c.get("pcb_pos")}},
+                      "parts": {c["ref"]: c["pcb_pos"] for c in project.components if c.get("pcb_pos")},
+                      "pads": {c["ref"]: c["pcb_pads"] for c in project.components if c.get("pcb_pads")}},
         }
 
     # -- API ---------------------------------------------------------------------
@@ -254,6 +259,10 @@ class Analysis:
                 line["datasheet"] = "https:" + line["datasheet"]
         line["desc"] = first["desc"]
         line["api_category"] = first.get("category", "")
+        # Body size and mounting of the chosen part - what its footprint was made for
+        line["api_size"] = alternatives._size(first.get("params"))
+        line["api_mounting"] = next((v for k, v in (first.get("params") or {}).items()
+                                     if k.lower().startswith("mounting")), "")
         line["api_package"] = next((p["package"] for p in found if p.get("package")), "") or \
             next((p["desc"] for p in found if P.parse_package(p["desc"] or "")), "")
         lc = " ".join(p.get("lifecycle", "") for p in found).lower()
@@ -316,11 +325,43 @@ class Analysis:
                 rep["status"] = "warn"
         rep["geometry"] = comp.get("geometry")
         line["pin_names"] = comp.get("pin_names") or {}
+        self._recognise(rep, pkg_text)
         rep["geometry_source"] = comp.get("geometry_source", "")
         line["fp"] = rep
         for w in comp.get("warnings", []):
             if w not in line["warnings"]:
                 line["warnings"].append(w)
+
+    @staticmethod
+    def _recognise(rep, part_pkg_text):
+        """Which KiCad library footprint has the same geometry? Catches footprints with meaningless or
+        wrong names: the geometry tells what package it really is."""
+        if not fplib.status()["ready"] or not (rep.get("geometry") or {}).get("pads"):
+            return
+        found = fplib.recognise(rep["geometry"])
+        if not found:
+            return
+        rep["recognised"] = found
+        best = found[0]
+        rec_pkg = P.parse_package(best["id"].split(":", 1)[1])
+        name_pkg = P.parse_package(rep.get("footprint_pkg") or "") if rep.get("footprint_pkg") else None
+        part_pkg = P.parse_package(part_pkg_text) if part_pkg_text else None
+        check = {"check": "Genkendt geometri", "status": "ok",
+                 "msg": f"Samme geometri som KiCad-bibliotekets {best['id']} ({best['similarity']} % ens)."}
+        if rec_pkg and name_pkg and P.compare(rec_pkg, name_pkg)[0] == "mismatch":
+            check["status"] = "warn"
+            check["msg"] += f" Men navnet siger {rep['footprint_pkg']} – navnet passer ikke med geometrien."
+        if rec_pkg and part_pkg and not name_pkg:
+            st, msg = P.compare(rec_pkg, part_pkg)
+            if st == "mismatch":
+                check["status"] = "mismatch"
+                check["msg"] += f" Komponenten er {P.describe(part_pkg)}: {msg}"
+            elif st == "ok":
+                check["msg"] += f" Passer med komponentens pakke ({P.describe(part_pkg)})."
+        rep["checks"].append(check)
+        order = {"ok": 0, "unknown": 1, "partial": 1, "warn": 2, "mismatch": 3}
+        if order[check["status"]] > order.get(rep["status"], 0):
+            rep["status"] = check["status"]
 
     def _datasheets(self, lines):
         """Read the package names in each IC's datasheet and compare with the footprint."""

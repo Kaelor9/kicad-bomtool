@@ -55,6 +55,7 @@ def best_buy(offer, need, extra_budget_abs=5.0, extra_budget_pct=10.0):
            "currency": offer.get("currency", ""), "stock": offer.get("stock"), "moq": moq,
            "reel_fee": offer.get("reel_fee", False), "suggestions": []}
     if base and cheapest[1] > base[1]:
+        out["saved"] = round(base[0] - cheapest[0], 2)
         out["suggestions"].append({
             "kind": "save", "qty": cheapest[1], "total": cheapest[0],
             "text": f"Køb {cheapest[1]} i stedet for {base[1]}: det koster {base[0] - cheapest[0]:.2f} mindre "
@@ -167,5 +168,6 @@ def totals(lines):
                 continue
             per_seller[s] = per_seller.get(s, 0) + b["total"]
             covered[s] = covered.get(s, 0) + 1
-    return {"mix": round(mix, 2), "lines_priced": count, "lines_unbuyable": unbuyable,
+    saved = sum((l["plan"]["best"].get("saved") or 0) for l in lines if l.get("plan"))
+    return {"mix": round(mix, 2), "lines_priced": count, "lines_unbuyable": unbuyable, "saved_breaks": round(saved, 2),
             "per_seller": {s: {"total": round(v, 2), "lines": covered[s]} for s, v in per_seller.items()}}

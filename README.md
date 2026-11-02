@@ -23,6 +23,14 @@ Valgfrit: `pip install pypdf pypdfium2 openpyxl xlrd pywebview` – bedre læsni
 
 ## Hvad den gør
 
+**Sprog:** engelsk som standard, dansk under Indstillinger → Sprog.
+**Stop:** en kørende analyse kan stoppes. **Opdatering:** "Opdatér nu" ligger også under Indstillinger.
+
+**Footprint-genkendelse:** programmet har et indeks over alle footprints i KiCad-bibliotekerne (bygges i
+baggrunden første gang, ca. 1½ minut). Et footprint genkendes ud fra sin geometri – også hvis det hedder
+noget tilfældigt – og der advares, hvis navnet siger én pakke men geometrien er en anden. Alternativer uden
+pakkenavn (fx trykknapper) sammenlignes med et KiCad-footprint opkaldt efter deres varenummer.
+
 Programmet er et **kontrolprogram**. Resultatet vises som komponenttabellen til venstre og et
 kontrolpanel til højre for den valgte komponent (pil op/ned skifter). Hver linje kontrolleres i tre trin,
 som også står som kolonner i tabellen:

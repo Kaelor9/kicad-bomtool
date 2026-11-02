@@ -155,40 +155,173 @@
   window.fpArcPath = arcPath;
 
   // The whole board, small: Edge.Cuts outline and every placed part as its outline box.
-  window.renderBoard = function (board, statusOf) {
-    if (!board || !Object.keys(board.parts || {}).length) return "";
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
-    for (const g of board.outline || []) {
-      if (g.pts) g.pts.forEach(p => add(p[0], p[1]));
-      else if (g.k === "circle") { const r = Math.hypot(g.x2 - g.x1, g.y2 - g.y1); add(g.x1 - r, g.y1 - r); add(g.x1 + r, g.y1 + r); }
-      else { add(g.x1, g.y1); add(g.x2, g.y2); if (g.xm != null) add(g.xm, g.ym); }
+  // ---- board view ----------------------------------------------------------------------
+  // The whole PCB: board outline, every part's pads, rings around parts with problems.
+  // Wheel zooms around the pointer, drag pans, double-click fits; select(refs) zooms to a part.
+  window.BoardView = class {
+    constructor(host, board, statusOf, onPick) {
+      this.host = host;
+      this.board = board;
+      this.onPick = onPick;
+      this.statusOf = statusOf;
+      this.sel = new Set();
+      this.build();
     }
-    if (!isFinite(x0)) for (const p of Object.values(board.parts)) add(p[0], p[1]);
-    const m = Math.max(x1 - x0, y1 - y0) * 0.03 + 0.5;
-    x0 -= m; y0 -= m; x1 += m; y1 += m;
-    const u = Math.max(x1 - x0, y1 - y0) / 400;
-    const parts = [`<style>.bd-edge{fill:none;stroke:var(--fab);stroke-width:${u * 1.6}}
-      .bd-p{fill:var(--surface2);stroke:var(--muted);stroke-width:${u * 0.8};cursor:pointer}
-      .bd-p.bot{stroke-dasharray:${u * 2} ${u * 1.5};fill:none}
-      .bd-p.warn{stroke:var(--warn);stroke-width:${u * 1.4}} .bd-p.mismatch,.bd-p.missing{stroke:var(--bad);stroke-width:${u * 1.6}}
-      .bd-p.x{opacity:.35;cursor:default}
-      .bd-p.hl{fill:var(--accent);stroke:var(--accent);opacity:1;filter:drop-shadow(0 0 ${u * 3}px var(--accent))}</style>`];
-    for (const g of board.outline || []) {
-      if (g.k === "line") parts.push(`<line class="bd-edge" x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}"/>`);
-      else if (g.k === "rect") parts.push(`<rect class="bd-edge" x="${Math.min(g.x1, g.x2)}" y="${Math.min(g.y1, g.y2)}" width="${Math.abs(g.x2 - g.x1)}" height="${Math.abs(g.y2 - g.y1)}"/>`);
-      else if (g.k === "circle") parts.push(`<circle class="bd-edge" cx="${g.x1}" cy="${g.y1}" r="${Math.hypot(g.x2 - g.x1, g.y2 - g.y1)}"/>`);
-      else if (g.k === "arc") parts.push(`<path class="bd-edge" d="${arcPath(g)}"/>`);
-      else if (g.k === "poly") parts.push(`<polygon class="bd-edge" points="${g.pts.map(p => p.join(",")).join(" ")}"/>`);
+
+    bounds() {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      const add = (x, y) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); };
+      for (const g of this.board.outline || []) {
+        if (g.pts) g.pts.forEach(p => add(p[0], p[1]));
+        else if (g.k === "circle") { const r = Math.hypot(g.x2 - g.x1, g.y2 - g.y1); add(g.x1 - r, g.y1 - r); add(g.x1 + r, g.y1 + r); }
+        else { add(g.x1, g.y1); add(g.x2, g.y2); if (g.xm != null) add(g.xm, g.ym); }
+      }
+      if (!isFinite(x0)) for (const p of Object.values(this.board.parts)) { add(p[0] - 3, p[1] - 3); add(p[0] + 3, p[1] + 3); }
+      return [x0, y0, x1, y1];
     }
-    // Top side last so it is drawn over the bottom side.
-    const refs = Object.entries(board.parts).sort((a, b) => (b[1][3] ? 1 : 0) - (a[1][3] ? 1 : 0));
-    for (const [ref, [x, y, rot, bottom, cx, cy, hw, hh]] of refs) {
-      const st = statusOf(ref);
-      parts.push(`<rect class="bd-p ${bottom ? "bot" : ""} ${st || "x"}" data-ref="${esc(ref)}" x="${cx - hw}" y="${cy - hh}" width="${Math.max(hw * 2, u * 3)}" height="${Math.max(hh * 2, u * 3)}"
-        transform="translate(${x} ${y}) rotate(${-rot})"><title>${esc(ref)}</title></rect>`);
+
+    outlinePath() {
+      // Edge.Cuts as one filled shape when it is a closed rect/poly, otherwise just strokes.
+      const parts = [];
+      for (const g of this.board.outline || []) {
+        if (g.k === "line") parts.push(`M${g.x1} ${g.y1}L${g.x2} ${g.y2}`);
+        else if (g.k === "rect") parts.push(`M${g.x1} ${g.y1}H${g.x2}V${g.y2}H${g.x1}Z`);
+        else if (g.k === "arc") parts.push(arcPath(g));
+        else if (g.k === "circle") { const r = Math.hypot(g.x2 - g.x1, g.y2 - g.y1); parts.push(`M${g.x1 - r} ${g.y1}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`); }
+        else if (g.k === "poly") parts.push("M" + g.pts.map(p => p.join(" ")).join("L") + "Z");
+      }
+      return parts.join(" ");
     }
-    return `<svg class="board-svg" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">${parts.join("")}</svg>`;
+
+    build() {
+      const [x0, y0, x1, y1] = this.bounds();
+      const m = Math.max(x1 - x0, y1 - y0) * 0.04 + 1;
+      this.full = [x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m];
+      this.vb = this.full.slice();
+      const u = Math.max(this.full[2], this.full[3]) / 500;
+      this.u = u;
+      const svg = [];
+      svg.push(`<rect class="bv-bg" x="${this.full[0] - 1000}" y="${this.full[1] - 1000}" width="${this.full[2] + 2000}" height="${this.full[3] + 2000}"/>`);
+      const outline = this.outlinePath();
+      if (outline) svg.push(`<path class="bv-board" d="${outline}" fill-rule="evenodd"/><path class="bv-edge" d="${outline}"/>`);
+      const pads = this.board.pads || {};
+      const entries = Object.entries(this.board.parts).sort((a, b) => (b[1][3] ? 1 : 0) - (a[1][3] ? 1 : 0));
+      for (const [ref, [x, y, rot, bottom, cx, cy, hw, hh]] of entries) {
+        const st = this.statusOf(ref);
+        const body = `<rect class="bv-body" x="${cx - hw}" y="${cy - hh}" width="${Math.max(hw * 2, u * 2)}" height="${Math.max(hh * 2, u * 2)}"/>`;
+        const pp = (pads[ref] || []).map(([px, py, pw, ph, pa, round]) => round
+          ? `<ellipse class="bv-pad" cx="${px}" cy="${py}" rx="${pw / 2}" ry="${ph / 2}" transform="rotate(${-pa} ${px} ${py})"/>`
+          : `<rect class="bv-pad" x="${px - pw / 2}" y="${py - ph / 2}" width="${pw}" height="${ph}" transform="rotate(${-pa} ${px} ${py})"/>`).join("");
+        svg.push(`<g class="bv-part ${bottom ? "bot" : "top"} ${st ? "in-bom" : "x"}" data-ref="${esc(ref)}" transform="translate(${x} ${y}) rotate(${-rot})"><title>${esc(ref)}</title>${body}${pp}</g>`);
+      }
+      // Problem rings drawn last, in board coordinates
+      for (const [ref, [x, y, rot, , cx, cy, hw, hh]] of entries) {
+        const st = this.statusOf(ref);
+        if (!st || st === "ok") continue;
+        const a = -rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+        const px = x + cx * c - cy * s, py = y + cx * s + cy * c;
+        const r = Math.max(hw, hh) * 1.15 + u * 3;
+        svg.push(`<circle class="bv-ring ${st}" data-ref="${esc(ref)}" cx="${px}" cy="${py}" r="${r}"/>`);
+      }
+      svg.push(`<g class="bv-selring"></g>`);
+      this.host.innerHTML = `<div class="bv">
+        <svg class="bv-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"><style>
+          .bv-bg{fill:var(--bv-bg)} .bv-board{fill:var(--bv-board)} .bv-edge{fill:none;stroke:var(--bv-edge);stroke-width:1.5px;vector-effect:non-scaling-stroke}
+          .bv-body{fill:none;stroke:var(--bv-silk);stroke-width:.8px;vector-effect:non-scaling-stroke;opacity:.5}
+          .bv-pad{fill:var(--bv-pad)} .bv-part.bot .bv-pad{fill:var(--bv-pad-bot)} .bv-part.bot .bv-body{stroke-dasharray:3 2}
+          .bv-part{cursor:pointer} .bv-part.x{opacity:.45;cursor:default}
+          .bv-part:hover .bv-body{opacity:1;stroke:var(--accent)}
+          .bv-part.sel .bv-pad{fill:var(--accent)} .bv-part.sel .bv-body{stroke:var(--accent);opacity:1;stroke-width:1.5px}
+          .bv-ring{fill:none;stroke-width:2px;vector-effect:non-scaling-stroke;pointer-events:none;opacity:.85}
+          .bv-ring.warn,.bv-ring.partial{stroke:var(--warn)} .bv-ring.mismatch,.bv-ring.missing{stroke:var(--bad)} .bv-ring.unknown{stroke:var(--info);opacity:.5}
+          .bv-sel{fill:none;stroke:var(--accent);stroke-width:3px;vector-effect:non-scaling-stroke;pointer-events:none;stroke-dasharray:6 3}
+        </style><g class="bv-world">${svg.join("")}</g></svg>
+        <div class="bv-tools"><button data-bv="in" title="Zoom ind">+</button><button data-bv="out" title="Zoom ud">−</button><button data-bv="fit" title="Hele printet">⤢</button></div>
+        <div class="bv-legend"><span><i class="bad"></i>${esc(window.t ? t("Error") : "Error")}</span><span><i class="warn"></i>${esc(window.t ? t("Check") : "Check")}</span><span><i class="sel"></i>${esc(window.t ? t("Selected") : "Selected")}</span></div>
+      </div>`;
+      this.svg = this.host.querySelector("svg");
+      this.apply();
+      this.wire();
+    }
+
+    apply() { this.svg.setAttribute("viewBox", this.vb.join(" ")); }
+
+    zoomAt(f, px, py) {
+      const [x, y, w, h] = this.vb;
+      const nw = Math.min(this.full[2] * 1.5, Math.max(this.full[2] / 60, w * f)), nh = nw * (h / w);
+      this.vb = [px - (px - x) * (nw / w), py - (py - y) * (nh / h), nw, nh];
+      this.apply();
+    }
+
+    toWorld(ev) {
+      const r = this.svg.getBoundingClientRect();
+      const [x, y, w, h] = this.vb;
+      const s = Math.max(w / r.width, h / r.height);
+      const ox = (r.width * s - w) / 2, oy = (r.height * s - h) / 2;
+      return [x - ox + (ev.clientX - r.left) * s, y - oy + (ev.clientY - r.top) * s, s];
+    }
+
+    wire() {
+      const svg = this.svg;
+      svg.addEventListener("wheel", ev => {
+        ev.preventDefault();
+        const [px, py] = this.toWorld(ev);
+        this.zoomAt(ev.deltaY > 0 ? 1.2 : 1 / 1.2, px, py);
+      }, { passive: false });
+      let drag = null;
+      svg.addEventListener("pointerdown", ev => { drag = { x: ev.clientX, y: ev.clientY, vb: this.vb.slice(), moved: false }; svg.setPointerCapture(ev.pointerId); });
+      svg.addEventListener("pointermove", ev => {
+        if (!drag) return;
+        const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+        if (!drag.moved) return;
+        const [, , s] = this.toWorld(ev);
+        this.vb = [drag.vb[0] - dx * s, drag.vb[1] - dy * s, drag.vb[2], drag.vb[3]];
+        this.apply();
+      });
+      svg.addEventListener("pointerup", ev => {
+        const wasDrag = drag && drag.moved;
+        drag = null;
+        if (wasDrag) return;
+        const g = ev.target.closest && ev.target.closest(".bv-part");
+        if (g && !g.classList.contains("x")) this.onPick(g.dataset.ref);
+      });
+      svg.addEventListener("dblclick", () => this.fit());
+      this.host.querySelector(".bv-tools").addEventListener("click", ev => {
+        const b = ev.target.closest("[data-bv]");
+        if (!b) return;
+        const [x, y, w, h] = this.vb;
+        if (b.dataset.bv === "fit") this.fit();
+        else this.zoomAt(b.dataset.bv === "in" ? 1 / 1.5 : 1.5, x + w / 2, y + h / 2);
+      });
+    }
+
+    fit() { this.vb = this.full.slice(); this.apply(); }
+
+    select(refs, zoom = true) {
+      this.sel = new Set(refs || []);
+      this.svg.querySelectorAll(".bv-part").forEach(g => g.classList.toggle("sel", this.sel.has(g.dataset.ref)));
+      const ring = this.svg.querySelector(".bv-selring");
+      const pts = [];
+      for (const ref of this.sel) {
+        const p = this.board.parts[ref];
+        if (!p) continue;
+        const [x, y, rot, , cx, cy, hw, hh] = p;
+        const a = -rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+        pts.push([x + cx * c - cy * s, y + cx * s + cy * c, Math.max(hw, hh)]);
+      }
+      ring.innerHTML = pts.map(([x, y, r]) => `<circle class="bv-sel" cx="${x}" cy="${y}" r="${r * 1.3 + this.u * 5}"/>`).join("");
+      if (!zoom || !pts.length) return;
+      // Show all selected parts, at least ~20 mm wide, never more than the whole board.
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const [x, y, r] of pts) { x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r); x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r); }
+      const aspect = this.full[3] / this.full[2];
+      let w = Math.max(35, (x1 - x0) * 1.6, ((y1 - y0) * 1.6) / aspect);
+      w = Math.min(w, this.full[2]);
+      const h = w * aspect;
+      this.vb = [(x0 + x1) / 2 - w / 2, (y0 + y1) / 2 - h / 2, w, h];
+      this.apply();
+    }
   };
 
   window.renderFootprint = function (geo, refPads, opts = {}) {

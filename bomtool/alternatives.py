@@ -231,8 +231,12 @@ def _actives(line, providers, need, settings, preferred):
             if priced:
                 priced["relation"] = "Lignende funktion (søgning)"
                 items.append(priced)
+    geo = (line.get("fp") or {}).get("geometry") or {}
+    from .fpcompare import features  # noqa: PLC0415 - avoid a cycle at import time
+    own_body = (features(geo).get("body") if geo.get("pads") else None) or line.get("api_size")
+    own_smd = all(p.get("type") == "smd" for p in geo.get("pads") or [] if p.get("num")) if geo.get("pads") else None
     for it in items:
-        _fit(it, own_pkg)
+        _fit(it, own_pkg, own_body, own_smd, geo)
     # Pinout only for those that fit the footprint, best stocked first (datasheets take time to read).
     order = {"ok": 0, "partial": 1, "unknown": 2, "warn": 2, "mismatch": 3}
     items.sort(key=lambda it: (order[it["fit"]], -(it.get("stock") or 0)))
@@ -290,10 +294,62 @@ def _pinouts(items, want):
         list(ex.map(one, items))
 
 
-def _fit(item, own_pkg):
-    """Does the candidate fit the existing footprint? Judged from package name and pin count."""
+def _size(params):
+    """Body size in mm from the distributor's "Size / Dimension" parameter: '... (4.60mm x 3.20mm)'."""
+    for k, v in (params or {}).items():
+        if re.search(r"size|dimension", k, re.I):
+            m = re.search(r"(\d+(?:[.,]\d+)?)\s*mm\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*mm", v or "")
+            if m:
+                return tuple(sorted((float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", ".")))))
+    return None
+
+
+def _fit_library(item, own_geo):
+    """No package to compare: a KiCad library footprint named after the candidate's MPN, compared pad by
+    pad with your footprint."""
+    from . import fplib  # noqa: PLC0415
+    from .footprint import compare_geometry  # noqa: PLC0415
+    if not own_geo or not own_geo.get("pads"):
+        return False
+    for e in fplib.by_mpn(item.get("mpn"))[:3]:
+        r = compare_geometry(own_geo, fplib.geometry(e))
+        if r.get("status") == "unknown":
+            continue
+        item["lib_fp"] = e["id"]
+        item["fit"] = {"ok": "ok", "warn": "partial"}.get(r["status"], "mismatch")
+        if item["fit"] == "ok":
+            item["check"] = f"KiCad-bibliotekets {e['id']} er magen til dit footprint."
+        elif item["fit"] == "partial":
+            item["check"] = f"KiCad-bibliotekets {e['id']} ligner dit footprint: {r['msg']}"
+        else:
+            item["check"] = f"Passer IKKE på dit footprint: KiCad-bibliotekets {e['id']} er anderledes ({r['msg']})"
+        return True
+    return False
+
+
+def _fit(item, own_pkg, own_body=None, own_smd=None, own_geo=None):
+    """Does the candidate fit the existing footprint? Judged from package name and pin count, or -
+    when the distributor gives no package name (switches, connectors) - from body size and mounting."""
     text = item.pop("pkg_text", "") or item.get("package") or item.get("desc") or ""
     cand = P.parse_package(text)
+    mount = (item.get("mounting") or "").lower()
+    if own_smd is not None and mount and (("through hole" in mount) == own_smd):
+        item["fit"] = "mismatch"
+        item["check"] = f"Passer IKKE på dit footprint: {item['mounting']} (dit footprint er {'SMD' if own_smd else 'hulmonteret'})."
+        return
+    if (not own_pkg or not cand) and own_body and item.get("size"):
+        want, have = sorted(own_body), item["size"]
+        if all(abs(a - b) <= 0.35 for a, b in zip(want, have)):
+            item["fit"] = "partial"
+            item["check"] = (f"Samme størrelse som dit footprint ({have[1]:g} × {have[0]:g} mm). "
+                             "Kontrollér padplacering og pinout i databladet.")
+        else:
+            item["fit"] = "mismatch"
+            item["check"] = (f"Anden størrelse: {have[1]:g} × {have[0]:g} mm, dit footprint er "
+                             f"{want[1]:g} × {want[0]:g} mm.")
+        return
+    if (not own_pkg or not cand) and _fit_library(item, own_geo):
+        return
     if not own_pkg or not cand:
         item["fit"] = "unknown"
         item["check"] = "Pakken kunne ikke sammenlignes – kontrollér footprint, pinout og elektriske data."
@@ -309,6 +365,14 @@ def _fit(item, own_pkg):
 
 
 def _item(part, plan, specs):
+    out = _item0(part, plan, specs)
+    out["photo"] = part.get("photo", "")
+    out["size"] = _size(part.get("params"))
+    out["mounting"] = next((v for k, v in (part.get("params") or {}).items() if k.lower().startswith("mounting")), "")
+    return out
+
+
+def _item0(part, plan, specs):
     best = plan["best"]
     pkg = P.parse_package(part.get("package") or part.get("desc") or "")
     return {"mpn": part["mpn"], "mfr": part["mfr"], "desc": part.get("desc", ""), "url": best.get("url") or part.get("url"),

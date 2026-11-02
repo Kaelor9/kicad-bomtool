@@ -41,18 +41,23 @@ def checks(line, result, choice=None):
     return fp, ds, buy, why
 
 
-def build_xlsx(result, choices=None):
+def build_xlsx(result, choices=None, lang="da"):
     from openpyxl import Workbook  # noqa: PLC0415
     from openpyxl.styles import Alignment, Font, PatternFill  # noqa: PLC0415
     from openpyxl.utils import get_column_letter  # noqa: PLC0415
 
     choices = choices or {}
+    from .i18n import tr  # noqa: PLC0415
+
+    def T(s):
+        return tr(s) if lang == "en" else s
     wb = Workbook()
     ws = wb.active
     ws.title = "BOM"
     head = ["Pos", "Antal pr. print", "Behov", "Referencer", "Værdi", "Beskrivelse", "Producent", "MPN", "Footprint",
             "Pakke", "Datablad", "Grosist", "Varenr.", "Køb (stk.)", "Stykpris", "Linjepris", "Valuta", "Lager",
             "Livscyklus", "1 Footprint", "2 Datablad", "3 Indkøb", "Bemærkninger"]
+    head = [T(h) for h in head]
     ws.append(head)
     bold = Font(bold=True, color="FFFFFF")
     for c in ws[1]:
@@ -91,7 +96,8 @@ def build_xlsx(result, choices=None):
                    (ch or {}).get("mpn") or l.get("mpn") or "", l["footprint"].split(":")[-1],
                    (l.get("fp") or {}).get("part_pkg") or (l.get("fp") or {}).get("footprint_pkg") or "",
                    l.get("datasheet") or "", seller or "", sku or "", qty, unit, line_total, cur or "", stock, lifecycle,
-                   STATUS_TXT.get(fp, fp), STATUS_TXT.get(ds, ds), STATUS_TXT.get(buy, buy), "\n".join(notes)])
+                   T(STATUS_TXT.get(fp, fp)), T(STATUS_TXT.get(ds, ds)), T(STATUS_TXT.get(buy, buy)),
+                   "\n".join(T(n) for n in notes)])
         row = ws.max_row
         if l.get("datasheet", "").startswith("http"):
             cell = ws.cell(row=row, column=11)
@@ -104,7 +110,7 @@ def build_xlsx(result, choices=None):
         for c in ws[row]:
             c.alignment = Alignment(vertical="top", wrap_text=c.column in (4, 6, 23))
     ws.append([])
-    ws.append(["", "", "", "", "", "", "", "", "", "", "", "", "", "", "I alt", round(total, 2)])
+    ws.append(["", "", "", "", "", "", "", "", "", "", "", "", "", "", T("I alt"), round(total, 2)])
     ws.cell(row=ws.max_row, column=15).font = Font(bold=True)
     ws.cell(row=ws.max_row, column=16).font = Font(bold=True)
     widths = [5, 8, 7, 22, 12, 40, 18, 22, 26, 16, 9, 12, 24, 9, 10, 11, 7, 9, 12, 11, 11, 11, 60]
@@ -114,8 +120,9 @@ def build_xlsx(result, choices=None):
     ws.auto_filter.ref = f"A1:{get_column_letter(len(head))}{len(result['lines']) + 1}"
 
     # Purchase list per seller - what to put in the cart
-    buy = wb.create_sheet("Indkøb")
-    buy.append(["Grosist", "Varenr.", "MPN", "Producent", "Antal", "Stykpris", "Linjepris", "Valuta", "Referencer"])
+    buy = wb.create_sheet(T("Indkøb"))
+    buy.append([T(h) for h in ["Grosist", "Varenr.", "MPN", "Producent", "Antal", "Stykpris", "Linjepris", "Valuta",
+                               "Referencer"]])
     for c in buy[1]:
         c.font = bold
         c.fill = PatternFill("solid", fgColor="1F2937")
@@ -135,8 +142,8 @@ def build_xlsx(result, choices=None):
     buy.freeze_panes = "A2"
 
     if result.get("excluded"):
-        ex = wb.create_sheet("Udeladt")
-        ex.append(["Reference", "Værdi", "Footprint", "Hvorfor"])
+        ex = wb.create_sheet(T("Udeladt"))
+        ex.append([T(h) for h in ["Reference", "Værdi", "Footprint", "Hvorfor"]])
         for c in ex[1]:
             c.font = bold
             c.fill = PatternFill("solid", fgColor="1F2937")
@@ -145,13 +152,13 @@ def build_xlsx(result, choices=None):
         for i, w in enumerate([12, 16, 40, 30], 1):
             ex.column_dimensions[get_column_letter(i)].width = w
 
-    info = wb.create_sheet("Projekt")
+    info = wb.create_sheet(T("Projekt"))
     p = result["project"]
     for k, v in (("Projekt", p.get("name")), ("Komponenter", p.get("components")), ("BOM-linjer", len(result["lines"])),
                  ("Print", result["settings"].get("boards", 1)), ("I alt (valgt indkøb)", round(total, 2)),
                  ("KiCad skematik", f"{p['version'].get('sch')} ({p['version'].get('sch_generator')})"),
                  ("KiCad PCB", f"{p['version'].get('pcb')} ({p['version'].get('pcb_generator')})")):
-        info.append([k, v])
+        info.append([T(k), v])
     info.column_dimensions["A"].width = 22
     info.column_dimensions["B"].width = 40
     buf = io.BytesIO()

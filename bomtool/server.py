@@ -9,8 +9,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote, urlparse
 
-from . import __version__, config, datasheet, dsimage, export, fpcompare, history, updater
-from .analyze import Analysis, run_alternatives
+from . import __version__, config, datasheet, dsimage, export, fpcompare, fplib, history, i18n, updater
+from .analyze import Analysis, Cancelled, run_alternatives
 from .providers import ProviderError, make_providers, mouser_cart
 
 WEB = os.path.join(os.path.dirname(__file__), "web")
@@ -33,6 +33,8 @@ def _run_job(job_id, body):
     job = JOBS[job_id]
 
     def progress(msg, pct):
+        if job.get("cancel"):
+            raise Cancelled()
         job["msg"], job["progress"] = msg, round(pct)
 
     try:
@@ -52,6 +54,8 @@ def _run_job(job_id, body):
             except OSError as e:
                 job["result"]["errors"].append(f"Kunne ikke gemme i historikken: {e}")
         job["state"] = "done"
+    except Cancelled:
+        job["state"], job["error"] = "cancelled", "Analysen blev stoppet."
     except Exception as e:  # noqa: BLE001 - surfaced to the user in the UI
         traceback.print_exc()
         job["state"], job["error"] = "error", str(e) or e.__class__.__name__
@@ -69,7 +73,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, raw=False):
+        if not raw:
+            obj = i18n.translate(obj, config.load().get("language", "en"))
         data = json.dumps(obj, ensure_ascii=False, default=lambda o: list(o) if isinstance(o, (set, tuple)) else str(o)).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -104,9 +110,15 @@ class Handler(BaseHTTPRequestHandler):
                 out["result"] = job["result"]
             return self._json(out)
         if path == "/api/settings":
-            return self._json(config.masked(config.load()))
+            return self._json(config.masked(config.load()), raw=True)
         if path == "/api/history":
             return self._json(history.entries())
+        if path == "/api/fpindex":
+            return self._json(fplib.status())
+        if path == "/api/libfp":
+            from urllib.parse import parse_qs  # noqa: PLC0415
+            q = parse_qs(urlparse(self.path).query)
+            return self._json(fplib.for_package(q.get("pkg", [""])[0], q.get("kind", [None])[0]) or {})
         if path == "/api/version":
             force = "force" in (urlparse(self.path).query or "")
             if not force and config.load().get("check_updates", "1") != "1":
@@ -200,11 +212,19 @@ class Handler(BaseHTTPRequestHandler):
                 settings = dict(job["result"].get("settings") or {})
                 res = run_alternatives(job["result"], body.get("line"), config.load(), settings)
                 return self._json(res)
+            if path == "/api/cancel":
+                job = JOBS.get(body.get("job"))
+                if job and job["state"] == "running":
+                    job["cancel"] = True
+                    job["msg"] = "Stopper …"
+                return self._json({"ok": True})
             if path == "/api/export/xlsx":
                 job = JOBS.get(body.get("job"))
                 if not job or job.get("state") != "done":
                     return self._json({"error": "Analysen findes ikke længere – kør den igen."}, 404)
-                data = export.build_xlsx(job["result"], body.get("choices") or {})
+                lang = config.load().get("language", "en")
+                data = export.build_xlsx(i18n.translate(job["result"], lang),
+                                         i18n.translate(body.get("choices") or {}, lang), lang)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 self.send_header("Content-Length", str(len(data)))
@@ -255,7 +275,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": str(e)}, 502)
             if path == "/api/settings":
                 cfg = config.save(body)
-                return self._json(config.masked(cfg))
+                return self._json(config.masked(cfg), raw=True)
             if path == "/api/test-keys":
                 cfg = config.load()
                 out = {}
@@ -278,6 +298,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def make_server(port=8765):
     """Bind 127.0.0.1 on the first free port from `port`. Returns (server, url)."""
+    fplib.ensure(background=True)    # footprint index for recognition (cached after the first run)
     for p in [port] + list(range(port + 1, port + 20)):
         try:
             server = ThreadingHTTPServer(("127.0.0.1", p), Handler)

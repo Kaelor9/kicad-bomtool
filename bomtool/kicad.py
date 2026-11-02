@@ -470,6 +470,10 @@ class Project:
             if fp:
                 used.add(id(fp))
                 comp["pcb_pos"] = fp["at"] + [fp["bottom"]] + _local_box(fp["geometry"])
+                # pads in footprint coordinates for the board view: x, y, w, h, angle, round?
+                comp["pcb_pads"] = [[round(p["x"], 3), round(p["y"], 3), round(p["w"], 3), round(p["h"], 3),
+                                     round(p.get("angle", 0), 1), 1 if p["shape"] in ("circle", "oval") else 0]
+                                    for p in fp["geometry"]["pads"] if p["w"] > 0]
                 if fp["ref"] != ref and comp["source"] != "pcb":
                     renamed.append(f"{ref} → '{fp['ref']}'")
                 comp["geometry"] = fp["geometry"]

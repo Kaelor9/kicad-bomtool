@@ -213,6 +213,7 @@ class DigiKey:
             "package": _param(params, "Package / Case", "Supplier Device Package"),
             "package2": _param(params, "Supplier Device Package"),
             "datasheet": p.get("DatasheetUrl", "") or "", "url": p.get("ProductUrl", ""),
+            "photo": p.get("PhotoUrl", "") or "",
             "stock": p.get("QuantityAvailable", 0), "category": (p.get("Category") or {}).get("Name", ""),
             "lifecycle": status, "params": params, "offers": offers,
             "dist_pn": offers[0]["sku"] if offers else "",
@@ -293,6 +294,7 @@ class Mouser:
                 "source": self.name, "mpn": p.get("ManufacturerPartNumber", ""), "mfr": p.get("Manufacturer", ""),
                 "desc": desc, "package": _param(params, "Package / Case", "Case Code - in", "Package/Case") or "",
                 "datasheet": p.get("DataSheetUrl", "") or "", "url": p.get("ProductDetailUrl", ""),
+                "photo": p.get("ImagePath", "") or "",
                 "stock": stock, "category": p.get("Category", ""), "lifecycle": p.get("LifecycleStatus") or "",
                 "params": params, "offers": offers, "dist_pn": p.get("MouserPartNumber", ""),
             })

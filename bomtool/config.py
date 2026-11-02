@@ -6,7 +6,7 @@ DEFAULTS = {
     "digikey_client_id": "", "digikey_client_secret": "", "digikey_customer_id": "",
     "mouser_key": "", "mouser_cart_key": "",
     "nexar_client_id": "", "nexar_client_secret": "",
-    "currency": "DKK", "country": "DK", "check_updates": "1",
+    "currency": "DKK", "country": "DK", "check_updates": "1", "language": "en",
 }
 SECRET_KEYS = ("digikey_client_secret", "mouser_key", "mouser_cart_key", "nexar_client_secret")
 
