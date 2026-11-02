@@ -75,7 +75,8 @@
     // Which way do the pad rows face? Pads stretched along x sit in left/right columns.
     let col = 0, row = 0;
     for (const p of reg) { const [ex, ey] = padBox(p); if (ex > ey * 1.1) col++; else if (ey > ex * 1.1) row++; else if (Math.abs(p.x) >= Math.abs(p.y)) col++; else row++; }
-    const X = col >= row;                       // true: columns at left/right, measure across in x
+    // Two terminals face each other: "across" is the line between them, whatever the pad shape.
+    const X = reg.length === 2 ? Math.abs(reg[0].x - reg[1].x) >= Math.abs(reg[0].y - reg[1].y) : col >= row;  // true: columns at left/right
     const A = p => X ? p.x : p.y, O = p => X ? p.y : p.x;          // across / along
     const eA = p => padBox(p)[X ? 0 : 1], eO = p => padBox(p)[X ? 1 : 0];
     const pt = (a, o) => X ? [a, o] : [o, a];
@@ -87,27 +88,27 @@
     const oMax = Math.max(...reg.map(p => O(p) + eO(p))), oMin = Math.min(...reg.map(p => O(p) - eO(p)));
     const p1 = reg.find(p => p.num === "1" || p.num === "A1") || reg[0];
     // 1. outer span
-    out.push({ a: pt(lo, oMax), b: pt(hi, oMax), d: dir, side: sides[0], level: 1, text: r3(hi - lo) });
+    out.push({ a: pt(lo, oMax), b: pt(hi, oMax), d: dir, side: sides[0], level: 1, text: r3(hi - lo), role: "outer" });
     if (neg.length && pos.length) {
       // 2. gap between the rows
       const g1 = Math.max(...neg.map(p => A(p) + eA(p))), g2 = Math.min(...pos.map(p => A(p) - eA(p)));
-      if (g2 - g1 > 0.05) out.push({ a: pt(g1, oMin), b: pt(g2, oMin), d: dir, side: sides[1], level: 1, text: r3(g2 - g1) });
+      if (g2 - g1 > 0.05) out.push({ a: pt(g1, oMin), b: pt(g2, oMin), d: dir, side: sides[1], level: 1, text: r3(g2 - g1), role: "gap" });
     }
     // 3. pad length (across) on pin 1
-    out.push({ a: pt(A(p1) - eA(p1), O(p1) - eO(p1)), b: pt(A(p1) + eA(p1), O(p1) - eO(p1)), d: dir, side: sides[1], level: 2, text: r3(2 * eA(p1)) });
+    out.push({ a: pt(A(p1) - eA(p1), O(p1) - eO(p1)), b: pt(A(p1) + eA(p1), O(p1) - eO(p1)), d: dir, side: sides[1], level: 2, text: r3(2 * eA(p1)), role: "padL" });
     // 4. pitch from pin 1 to its neighbour in the same row
     const nb = reg.filter(q => q !== p1 && Math.abs(A(q) - A(p1)) < 0.05).sort((q1, q2) => Math.abs(O(q1) - O(p1)) - Math.abs(O(q2) - O(p1)))[0];
     const edgeSide = A(p1) <= 0 ? sides[2] : sides[3];
     // (extension lines start at the outer pad edge, on the pad centre line)
     const outer = p => A(p) <= 0 ? A(p) - eA(p) : A(p) + eA(p);
-    if (nb) out.push({ a: pt(outer(p1), O(p1)), b: pt(outer(nb), O(nb)), d: odir, side: edgeSide, level: 1, text: r3(Math.abs(O(nb) - O(p1))) });
+    if (nb) out.push({ a: pt(outer(p1), O(p1)), b: pt(outer(nb), O(nb)), d: odir, side: edgeSide, level: 1, text: r3(Math.abs(O(nb) - O(p1))), role: "pitch" });
     // 5. pad width (along) on pin 1
-    out.push({ a: pt(A(p1), O(p1) - eO(p1)), b: pt(A(p1), O(p1) + eO(p1)), d: odir, side: edgeSide, level: nb ? 2 : 1, text: r3(2 * eO(p1)) });
+    out.push({ a: pt(A(p1), O(p1) - eO(p1)), b: pt(A(p1), O(p1) + eO(p1)), d: odir, side: edgeSide, level: nb ? 2 : 1, text: r3(2 * eO(p1)), role: "padW" });
     // 6. exposed pad
     if (ep.length === 1) {
       const e = ep[0], [ex, ey] = padBox(e);
-      out.push({ a: [e.x - ex, e.y + ey], b: [e.x + ex, e.y + ey], d: "h", side: "below", level: 2, text: r3(2 * ex) });
-      out.push({ a: [e.x + ex, e.y - ey], b: [e.x + ex, e.y + ey], d: "v", side: "right", level: 2, text: r3(2 * ey) });
+      out.push({ a: [e.x - ex, e.y + ey], b: [e.x + ex, e.y + ey], d: "h", side: "below", level: 2, text: r3(2 * ex), role: "epW" });
+      out.push({ a: [e.x + ex, e.y - ey], b: [e.x + ex, e.y + ey], d: "v", side: "right", level: 2, text: r3(2 * ey), role: "epH" });
     }
     return out;
   }
@@ -153,6 +154,13 @@
   }
 
   window.fpArcPath = arcPath;
+  // The measures the drawing dimensions, by role: {pads, outer, gap, padL, padW, pitch, epW, epH}.
+  window.fpMeasures = function (geo) {
+    const pads = ((geo && geo.pads) || []).filter(p => p.type !== "np_thru_hole");
+    const out = { pads: pads.filter(p => p.num !== "").length };
+    autoDims(pads).forEach(d => { if (!(d.role in out)) out[d.role] = +d.text; });
+    return out;
+  };
 
   // The whole board, small: Edge.Cuts outline and every placed part as its outline box.
   // ---- board view ----------------------------------------------------------------------
@@ -212,29 +220,21 @@
         const pp = (pads[ref] || []).map(([px, py, pw, ph, pa, round]) => round
           ? `<ellipse class="bv-pad" cx="${px}" cy="${py}" rx="${pw / 2}" ry="${ph / 2}" transform="rotate(${-pa} ${px} ${py})"/>`
           : `<rect class="bv-pad" x="${px - pw / 2}" y="${py - ph / 2}" width="${pw}" height="${ph}" transform="rotate(${-pa} ${px} ${py})"/>`).join("");
-        svg.push(`<g class="bv-part ${bottom ? "bot" : "top"} ${st ? "in-bom" : "x"}" data-ref="${esc(ref)}" transform="translate(${x} ${y}) rotate(${-rot})"><title>${esc(ref)}</title>${body}${pp}</g>`);
+        // The part itself shows its status: tinted body and outline, no rings around it.
+        svg.push(`<g class="bv-part ${bottom ? "bot" : "top"} ${st ? "in-bom st-" + st : "x"}" data-ref="${esc(ref)}" transform="translate(${x} ${y}) rotate(${-rot})"><title>${esc(ref)}</title>${body}${pp}</g>`);
       }
-      // Problem rings drawn last, in board coordinates
-      for (const [ref, [x, y, rot, , cx, cy, hw, hh]] of entries) {
-        const st = this.statusOf(ref);
-        if (!st || st === "ok") continue;
-        const a = -rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-        const px = x + cx * c - cy * s, py = y + cx * s + cy * c;
-        const r = Math.max(hw, hh) * 1.15 + u * 3;
-        svg.push(`<circle class="bv-ring ${st}" data-ref="${esc(ref)}" cx="${px}" cy="${py}" r="${r}"/>`);
-      }
-      svg.push(`<g class="bv-selring"></g>`);
       this.host.innerHTML = `<div class="bv">
         <svg class="bv-svg" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet"><style>
           .bv-bg{fill:var(--bv-bg)} .bv-board{fill:var(--bv-board)} .bv-edge{fill:none;stroke:var(--bv-edge);stroke-width:1.5px;vector-effect:non-scaling-stroke}
           .bv-body{fill:none;stroke:var(--bv-silk);stroke-width:.8px;vector-effect:non-scaling-stroke;opacity:.5}
           .bv-pad{fill:var(--bv-pad)} .bv-part.bot .bv-pad{fill:var(--bv-pad-bot)} .bv-part.bot .bv-body{stroke-dasharray:3 2}
-          .bv-part{cursor:pointer} .bv-part.x{opacity:.45;cursor:default}
+          .bv-part{cursor:pointer;transition:opacity .15s} .bv-part.x{opacity:.45;cursor:default}
           .bv-part:hover .bv-body{opacity:1;stroke:var(--accent)}
-          .bv-part.sel .bv-pad{fill:var(--accent)} .bv-part.sel .bv-body{stroke:var(--accent);opacity:1;stroke-width:1.5px}
-          .bv-ring{fill:none;stroke-width:2px;vector-effect:non-scaling-stroke;pointer-events:none;opacity:.85}
-          .bv-ring.warn,.bv-ring.partial{stroke:var(--warn)} .bv-ring.mismatch,.bv-ring.missing{stroke:var(--bad)} .bv-ring.unknown{stroke:var(--info);opacity:.5}
-          .bv-sel{fill:none;stroke:var(--accent);stroke-width:3px;vector-effect:non-scaling-stroke;pointer-events:none;stroke-dasharray:6 3}
+          .bv-part.st-warn .bv-body,.bv-part.st-partial .bv-body{fill:var(--warn);fill-opacity:.35;stroke:var(--warn);opacity:1;stroke-width:1.2px}
+          .bv-part.st-mismatch .bv-body,.bv-part.st-missing .bv-body{fill:var(--bad);fill-opacity:.45;stroke:var(--bad);opacity:1;stroke-width:1.2px}
+          .bv-part.st-mismatch .bv-pad,.bv-part.st-missing .bv-pad{fill:#e8786e}
+          .has-sel .bv-part:not(.sel){opacity:.3}
+          .bv-part.sel .bv-pad{fill:#fff} .bv-part.sel .bv-body{fill:var(--accent);fill-opacity:.55;stroke:#fff;opacity:1;stroke-width:2px}
         </style><g class="bv-world">${svg.join("")}</g></svg>
         <div class="bv-tools"><button data-bv="in" title="Zoom ind">+</button><button data-bv="out" title="Zoom ud">−</button><button data-bv="fit" title="Hele printet">⤢</button></div>
         <div class="bv-legend"><span><i class="bad"></i>${esc(window.t ? t("Error") : "Error")}</span><span><i class="warn"></i>${esc(window.t ? t("Check") : "Check")}</span><span><i class="sel"></i>${esc(window.t ? t("Selected") : "Selected")}</span></div>
@@ -301,7 +301,7 @@
     select(refs, zoom = true) {
       this.sel = new Set(refs || []);
       this.svg.querySelectorAll(".bv-part").forEach(g => g.classList.toggle("sel", this.sel.has(g.dataset.ref)));
-      const ring = this.svg.querySelector(".bv-selring");
+      this.svg.classList.toggle("has-sel", this.sel.size > 0);
       const pts = [];
       for (const ref of this.sel) {
         const p = this.board.parts[ref];
@@ -310,7 +310,6 @@
         const a = -rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
         pts.push([x + cx * c - cy * s, y + cx * s + cy * c, Math.max(hw, hh)]);
       }
-      ring.innerHTML = pts.map(([x, y, r]) => `<circle class="bv-sel" cx="${x}" cy="${y}" r="${r * 1.3 + this.u * 5}"/>`).join("");
       if (!zoom || !pts.length) return;
       // Show all selected parts, at least ~20 mm wide, never more than the whole board.
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

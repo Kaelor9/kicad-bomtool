@@ -100,11 +100,53 @@ def plan_line(offers, need, settings):
     return {"best": ranked[0][1], "per_seller": {s: kb[1] for s, kb in per_seller.items()}}
 
 
-def consolidate(lines, shipping):
+def order_rules(cfg, fallback=0.0):
+    """Freight and VAT as the distributors charge them: a fee below a free-freight limit, per seller."""
+    def num(k, d=0.0):
+        try:
+            return float(str(cfg.get(k, d)).replace(",", ".") or 0)
+        except ValueError:
+            return d
+    return {"vat_pct": num("vat_pct"), "fallback": float(fallback or 0),
+            "freight": {"digikey": [num("freight_digikey"), num("free_digikey")],
+                        "mouser": [num("freight_mouser"), num("free_mouser")]}}
+
+
+def freight_for(seller, merchandise, rules):
+    """Freight one seller charges for an order of `merchandise` (before VAT)."""
+    if not rules:
+        return 0.0
+    key = "".join(c for c in (seller or "").lower() if c.isalpha())
+    for name, (fee, free_over) in rules.get("freight", {}).items():
+        if key.startswith(name):
+            return 0.0 if free_over and merchandise >= free_over else fee
+    return rules.get("fallback", 0.0)
+
+
+def order(lines, rules):
+    """What the order really costs: per seller merchandise + freight, then VAT on top."""
+    per = {}
+    for l in lines:
+        b = (l.get("plan") or {}).get("best")
+        if b and not b.get("impractical"):
+            per[b["seller"]] = per.get(b["seller"], 0) + b["total"]
+    vat = (rules or {}).get("vat_pct", 0) / 100
+    sellers = []
+    for s, m in sorted(per.items()):
+        f = freight_for(s, m, rules)
+        sellers.append({"seller": s, "merchandise": round(m, 2), "freight": round(f, 2),
+                        "vat": round((m + f) * vat, 2), "total": round((m + f) * (1 + vat), 2)})
+    sums = {k: round(sum(x[k] for x in sellers), 2) for k in ("merchandise", "freight", "vat", "total")}
+    return dict(sums, sellers=sellers, vat_pct=(rules or {}).get("vat_pct", 0))
+
+
+def consolidate(lines, rules):
     """Fewer sellers when the freight saved is worth more than the extra part cost.
     Moves every line of a seller to the other sellers in use, if that is cheaper in total,
     and repeats until nothing improves. Changes plan["best"] in place; returns a summary."""
-    if not shipping or shipping <= 0:
+    if isinstance(rules, (int, float)):
+        rules = {"fallback": float(rules), "freight": {}, "vat_pct": 0}
+    if not rules or not (rules.get("fallback") or any(f for f, _ in rules.get("freight", {}).values())):
         return None
     priced = [l for l in lines if l.get("plan") and not l["plan"]["best"].get("impractical")]
 
@@ -113,7 +155,10 @@ def consolidate(lines, shipping):
         return b if b and not b.get("impractical") else None
 
     def cost(assign):
-        return sum(usable(l, assign[l["id"]])["total"] for l in priced) + shipping * len(set(assign.values()))
+        per = {}
+        for l in priced:
+            per[assign[l["id"]]] = per.get(assign[l["id"]], 0) + usable(l, assign[l["id"]])["total"]
+        return sum(m + freight_for(s, m, rules) for s, m in per.items())
 
     assign = {l["id"]: l["plan"]["best"]["seller"] for l in priced}
     start = cost(assign)
@@ -146,7 +191,7 @@ def consolidate(lines, shipping):
                 "text": f"Købes hos {s} i stedet for {l['plan']['best']['seller']}: lidt dyrere her, men det sparer fragt."}]
             l["plan"]["best"] = b
     end = cost(assign)
-    return {"sellers": sorted(set(assign.values())), "shipping": shipping, "moved": moved,
+    return {"sellers": sorted(set(assign.values())), "moved": moved,
             "saved": round(start - end, 2), "total_with_shipping": round(end, 2)}
 
 

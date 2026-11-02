@@ -166,8 +166,12 @@ tfoot th { position: static; }
 .bv-tools { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .bv-tools button { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 14px; line-height: 1; }
 .bv-legend { position: absolute; left: 8px; bottom: 6px; display: flex; gap: 10px; font-size: 11px; color: #e6e9ee; text-shadow: 0 1px 2px #000; }
-.bv-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2px solid; margin-right: 4px; vertical-align: -1px; }
-.bv-legend i.bad { border-color: var(--bad); } .bv-legend i.warn { border-color: var(--warn); } .bv-legend i.sel { border-color: var(--accent); background: var(--accent); }
+.bv-legend i { display: inline-block; width: 10px; height: 8px; border-radius: 2px; border: 1.5px solid; margin-right: 4px; vertical-align: -1px; }
+.bv-legend i.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 45%, transparent); }
+.bv-legend i.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 35%, transparent); }
+.bv-legend i.sel { border-color: #fff; background: var(--accent); }
+tr.unbuyable td { background: color-mix(in srgb, var(--bad) 6%, transparent); }
+.tbl-wrap.order { margin: 0 0 12px; max-width: 640px; }
 
 .side-head { padding: 14px 0 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 2; }
 .side-head h2 { font-size: 17px; margin-bottom: 2px; }
@@ -196,7 +200,7 @@ tfoot th { position: static; }
 .checks b { font-weight: 600; }
 .recog { background: var(--surface2); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin: 8px 0; }
 .ds-pics { display: grid; gap: 10px; }
-.ds-pic img { display: block; width: 100%; border-radius: 8px; background: #fff; border: 1px solid var(--border); cursor: zoom-in; }
+.ds-pic img { display: block; max-width: 100%; max-height: 380px; margin: 0 auto; border-radius: 8px; background: #fff; border: 1px solid var(--border); cursor: zoom-in; }
 .ds-pic .cap { font-size: 11.5px; color: var(--muted); margin-bottom: 3px; }
 .side iframe { width: 100%; height: 72vh; border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; background: #fff; }
 .sugg { background: var(--ok-bg); color: var(--ok); border-radius: 6px; padding: 5px 9px; margin-top: 4px; font-size: 12px; }
@@ -245,3 +249,17 @@ legend a { font-weight: 400; font-size: 12px; margin-left: 6px; }
   .tabs .filter { margin-left: 0; }
   fieldset.inline { grid-template-columns: 1fr; }
 }
+
+/* Footprint tab: yours and the datasheet's side by side */
+.fp-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin: 6px 0 4px; }
+.fp-pair figure { margin: 0; min-width: 0; }
+.fp-pair figcaption { font-size: 12px; min-height: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.fp-pair figcaption .sub { font-size: 11px; }
+.fp-pair .fp-svg { margin: 4px 0 0; }
+.fp-pair .fp-svg svg { height: 250px; }
+.fp-svg.empty-ref { height: 250px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 20px; color: var(--muted); font-size: 12.5px; }
+.seg.small button { padding: 1px 7px; font-size: 11px; }
+.meas-cmp { margin: 8px 0; }
+.meas-cmp td:first-child { color: var(--muted); }
+ul.notes { margin: 10px 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+.ds-pic { margin: 10px 0; }

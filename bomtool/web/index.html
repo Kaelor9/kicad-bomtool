@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KiCad BOM Check</title>
+<link rel="icon" href="icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -72,7 +73,7 @@
           <label><span data-t>Spares, others (%)</span><input type="number" id="oSpare" min="0" value="0"></label>
           <label><span data-t>"Buy more" if at most + (kr.)</span><input type="number" id="oExtraAbs" min="0" value="5" step="0.5"></label>
           <label><span data-t>… or + (%)</span><input type="number" id="oExtraPct" min="0" value="10"></label>
-          <label><span data-t>Freight per distributor (kr.)</span><input type="number" id="oShip" min="0" value="0" step="5"></label>
+          <label><span data-t>Freight, other distributors (kr.)</span><input type="number" id="oShip" min="0" value="0" step="5"></label>
           <label class="check"><input type="checkbox" id="oSuggest" checked> <span data-t>Suggest MPNs for passives without one</span></label>
           <label class="check"><input type="checkbox" id="oHist" checked> <span data-t>Save the analysis in history</span></label>
         </div>
@@ -130,6 +131,18 @@
         <select name="language" id="langSel"><option value="en">English</option><option value="da">Dansk</option></select></label>
       <label><span data-t>Currency</span><input name="currency" maxlength="3"></label>
       <label><span data-t>Country</span><input name="country" maxlength="2"></label>
+    </fieldset>
+    <fieldset>
+      <legend data-t>Order cost</legend>
+      <div class="opt-grid">
+        <label><span data-t>VAT (%)</span><input name="vat_pct" type="number" min="0" step="0.5"></label>
+        <span></span>
+        <label><span data-t>DigiKey freight</span><input name="freight_digikey" type="number" min="0"></label>
+        <label><span data-t>… free from</span><input name="free_digikey" type="number" min="0"></label>
+        <label><span data-t>Mouser freight</span><input name="freight_mouser" type="number" min="0"></label>
+        <label><span data-t>… free from</span><input name="free_mouser" type="number" min="0"></label>
+      </div>
+      <p class="hint" data-t>Amounts in your currency, before VAT. Defaults are DigiKey's and Mouser's prices for Denmark – check them on their sites.</p>
     </fieldset>
     <p class="hint" data-t>Keys are stored only on this computer (in your user folder) and are only sent to the distributors' own APIs.</p>
     <fieldset>

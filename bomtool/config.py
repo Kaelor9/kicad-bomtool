@@ -7,6 +7,8 @@ DEFAULTS = {
     "mouser_key": "", "mouser_cart_key": "",
     "nexar_client_id": "", "nexar_client_secret": "",
     "currency": "DKK", "country": "DK", "check_updates": "1", "language": "en",
+    # What the order really costs (Denmark, 2026): 25 % VAT; DigiKey kr. 185 below kr. 550, Mouser free from kr. 550.
+    "vat_pct": "25", "freight_digikey": "185", "free_digikey": "550", "freight_mouser": "150", "free_mouser": "550",
 }
 SECRET_KEYS = ("digikey_client_secret", "mouser_key", "mouser_cart_key", "nexar_client_secret")
 

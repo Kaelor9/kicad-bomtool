@@ -39,8 +39,8 @@ def _visible(img, box, h):
 
 
 def _find(doc, pages, words):
-    """(page index, x, y from top in points) of the most specific *visible* heading: every page is
-    tried for the first word before the next, more general word is tried."""
+    """(page index, x, y from top in points) of every *visible* heading, most specific first: every page
+    is tried for the first word before the next, more general word is tried."""
     pages = [p for p in pages if 1 <= p <= len(doc)]
     tps, imgs = {}, {}
     try:
@@ -54,16 +54,55 @@ def _find(doc, pages, words):
                     found = search.get_next()
                     if not found:
                         break
+                    if not _heading_line(tp, found, w, w == words[-1]):
+                        continue
                     box = tp.get_charbox(found[0])
                     h = doc[pno - 1].get_size()[1]
                     if pno not in imgs:
                         imgs[pno] = doc[pno - 1].render(scale=1).to_pil()
                     if _visible(imgs[pno], box, h):
-                        return pno - 1, box[0], h - box[3]
+                        yield pno - 1, box[0], h - box[3]
     finally:
         for tp in tps.values():
             tp.close()
-    return None, None, None
+
+
+def _heading_line(tp, found, word, generic):
+    """Is the match a heading? Not a line in the table of contents ("Outline Dimensions ..... 27"),
+    not a sentence ("... mounted on an FR4 board, standard footprint."). The most general words
+    ("footprint", "dimensions") must also start their line."""
+    import re  # noqa: PLC0415
+    i, n = found
+    start = max(0, i - 80)
+    text = tp.get_text_range(start, min(i + n + 80, tp.count_chars()) - start)
+    k = i - start
+    line = text[text.rfind("\n", 0, k) + 1:]
+    nl = line.find("\n", k - (text.rfind("\n", 0, k) + 1))
+    line = (line[:nl] if nl >= 0 else line).strip()
+    if "...." in line or "…" in line or ". . ." in line or len(line) > 60:
+        return False
+    if re.search(r"[A-Za-z]\s+\d{1,3}$", line):     # "PCB Layout Recommendations 45": contents
+        return False
+    if generic:
+        head = re.sub(r"^[\d.\s•·\-–]+", "", line).lower()
+        return head.startswith(word) and len(line) <= 32
+    return True
+
+
+def _wordy(page, box):
+    """Is this region of the page running text rather than a drawing? Drawings carry numbers and a
+    few labels; a paragraph about solder fillets carries dozens of real words."""
+    import re  # noqa: PLC0415
+    l, t, r, b = box
+    h = page.get_size()[1]
+    tp = page.get_textpage()
+    try:
+        text = tp.get_text_bounded(left=l, bottom=h - b, right=r, top=h - t)
+    finally:
+        tp.close()
+    words = len(re.findall(r"[A-Za-z]{4,}", text or ""))
+    numbers = len(re.findall(r"\d+\.\d+|\d+", text or ""))
+    return words > 40 and numbers < words
 
 
 def _headings(doc, idx):
@@ -107,6 +146,33 @@ def _block_end(img, start, max_px, gap_px):
     return min(gray.height, start + max_px)
 
 
+def _first_ink(img, start, max_px):
+    """First row with ink at or below `start` (within max_px), or None."""
+    gray = img.convert("L")
+    px = gray.load()
+    for y in range(start, min(gray.height, start + max_px)):
+        if any(px[x, y] < 200 for x in range(0, gray.width, 3)):
+            return y
+    return None
+
+
+def _block_start(img, end, max_px, gap_px):
+    """Going up from `end`: the top of the block of content, where a band of `gap_px` blank rows begins."""
+    gray = img.convert("L")
+    w = gray.width
+    px = gray.load()
+    seen, blank = 0, 0
+    for y in range(end, max(-1, end - max_px), -1):
+        if any(px[x, y] < 200 for x in range(0, w, 3)):
+            seen += 1
+            blank = 0
+        else:
+            blank += 1
+            if seen > gap_px and blank >= gap_px:
+                return y + blank
+    return max(0, end - max_px)
+
+
 def image(url, kind, fp_pkg=None):
     """PNG bytes of the land pattern ("land") or package outline ("outline") drawing, or None."""
     text = datasheet.text_for(url)
@@ -124,34 +190,55 @@ def _image(data, text, kind, fp_pkg):
         # Pages naming the footprint's package first, then the rest of the drawing pages, then everything.
         order += [p for p in range(1, len(doc) + 1) if p not in order]
         words = LAND if kind == "land" else OUTLINE
-        idx, x, y = _find(doc, order, words)
-        if idx is None:
-            if not order:
-                return None
-            idx, x, y = order[0] - 1, 0, 0
-        page = doc[idx]
-        h = page.get_size()[1]
-        scale = 2.2
-        img = page.render(scale=scale).to_pil()
-        top = int(max(0, (y - 6) * scale))
-        # Stop at the next heading below this one, or at the first wide blank band, or after 60 % of a page.
-        nxt = [hy for hy in _headings(doc, idx) if hy > y + 25]
-        limit = int(((min(nxt) - 4) * scale if nxt else img.height) - top)
-        limit = max(40, min(limit, int(h * 0.6 * scale)))
-        skip = int(18 * scale)          # the heading itself
-        bottom = _block_end(img, top + skip, max(20, limit - skip), int(h * 0.035 * scale))
-        crop = img.crop((0, top, img.width, max(bottom, top + 40)))
-        # Heading in the right-hand column with an empty gutter to its left: keep only that column.
-        if x and x > page.get_size()[0] * 0.4:
-            left = _gutter(crop, int(page.get_size()[0] * 0.25 * scale), int(x * scale) - 10, int(page.get_size()[0] * 0.02 * scale))
-            if left:
-                crop = crop.crop((left, 0, crop.width, crop.height))
-        crop = _trim(crop)
+        crop = None
+        found = _find(doc, order, words)
+        try:
+            # The first few headings in turn: skip a "footprint" that only starts a paragraph of text.
+            for _, (idx, x, y) in zip(range(8), found):
+                crop = _cut(doc, idx, x, y, 2.2)
+                if crop:
+                    break
+        finally:
+            found.close()       # its text pages must close before the document does
+        if not crop:
+            return None
         buf = io.BytesIO()
         crop.save(buf, "PNG", optimize=True)
         return buf.getvalue(), idx + 1
     finally:
         doc.close()
+
+
+def _cut(doc, idx, x, y, scale):
+    """The drawing under the heading at (x, y), or None when that region is running text."""
+    page = doc[idx]
+    pw, h = page.get_size()
+    img = page.render(scale=scale).to_pil()
+    top = int(max(0, (y - 6) * scale))
+    # Stop at the next heading below this one, or at the first wide blank band, or after 60 % of a page.
+    nxt = [hy for hy in _headings(doc, idx) if hy > y + 25]
+    limit = int(((min(nxt) - 4) * scale if nxt else img.height) - top)
+    limit = max(40, min(limit, int(h * 0.6 * scale)))
+    skip = int(18 * scale)          # the heading itself
+    gap = int(h * 0.035 * scale)
+    if _first_ink(img, top + skip, int(30 * scale)) is None and y > h * 0.25:
+        # Nothing right under it: a caption below its figure ("Figure 11: ... Land Pattern").
+        bottom = int((y + 14) * scale)
+        top = _block_start(img, int((y - 4) * scale), int(h * 0.6 * scale), gap)
+    else:
+        bottom = _block_end(img, top + skip, max(20, limit - skip), gap)
+    bottom = max(bottom, top + 40)
+    left = 0
+    # Heading in the right-hand column with an empty gutter to its left: keep only that column.
+    if x and x > pw * 0.4:
+        left = _gutter(img.crop((0, top, img.width, bottom)), int(pw * 0.25 * scale), int(x * scale) - 10, int(pw * 0.02 * scale)) or 0
+    if _wordy(page, (left / scale, top / scale, pw, bottom / scale)):
+        return None
+    crop = _trim(img.crop((left, top, img.width, bottom)))
+    # A heading with hardly anything under it (a table cell, a caption) is not the drawing.
+    if crop.height < 50 * scale:
+        return None
+    return crop
 
 
 def _gutter(img, x0, x1, min_w):

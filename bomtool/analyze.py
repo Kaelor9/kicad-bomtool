@@ -159,7 +159,8 @@ class Analysis:
             line.pop("offers", None)
             line["status"] = self._line_status(line, dist_boms)
 
-        consolidated = pricing.consolidate(lines, float(self.settings.get("shipping", 0) or 0))
+        rules = pricing.order_rules(self.cfg, self.settings.get("shipping", 0))
+        consolidated = pricing.consolidate(lines, rules)
         summary = self._summary(lines, excluded, dist_boms, project)
         self.progress("Færdig.", 100)
         for line in lines:
@@ -170,7 +171,8 @@ class Analysis:
             "lines": lines, "excluded": excluded,
             "dist_boms": [{k: v for k, v in d.items()} for d in dist_boms],
             "references": [{"file": r["file"], "name": r["name"]} for r in refs],
-            "totals": dict(pricing.totals(lines), shipping=consolidated), "summary": summary, "errors": self.errors,
+            "totals": dict(pricing.totals(lines), shipping=consolidated, order=pricing.order(lines, rules)),
+            "order_rules": rules, "summary": summary, "errors": self.errors,
             "providers": [p.name for p in self.providers], "settings": self.settings,
             # For the board view: outline + each placed part [x, y, rot, bottom, cx, cy, half w, half h]
             "board": {"outline": project.board_outline,

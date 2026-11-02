@@ -337,9 +337,9 @@
     });
     const tot = r.totals || {};
     if (tot.lines_priced) {
-      const sh = tot.shipping;
-      tiles.push(`<div class="tile"><div class="k">${esc(sh ? t("Cheapest incl. freight") : t("Total"))}</div>
-        <div class="v">${money(sh ? sh.total_with_shipping : tot.mix, cur)}</div>
+      const o = orderSummary();
+      tiles.push(`<div class="tile"><div class="k">${esc(o.vat_pct ? t("Order incl. freight and VAT") : t("Order incl. freight"))}</div>
+        <div class="v">${money(o.total, cur)}</div>
         <div class="s">${esc(t("{a} of {b} lines priced", { a: tot.lines_priced, b: r.lines.length }))}${tot.lines_unbuyable ? " · " + esc(t("{n} full reel only", { n: tot.lines_unbuyable })) : ""}</div></div>`);
     }
     $("#tiles").innerHTML = tiles.join("");
@@ -407,6 +407,14 @@
       const p = l.plan, ch = state.choice[l.id];
       if (!p && !ch) return `<tr data-line="${esc(l.id)}"><td class="refs">${esc(l.refs.join(", "))}</td><td class="mono">${esc(l.mpn || l.value)}</td><td class="num">${l.need_spare}</td><td colspan="5" class="sub">${esc(t("No price found"))}</td></tr>`;
       const b = ch ? { qty: ch.qty, seller: ch.seller, sku: ch.sku, unit: ch.unit, total: ch.price, stock: ch.stock, suggestions: [] } : p.best;
+      if (b.impractical) return `<tr data-line="${esc(l.id)}" class="unbuyable">
+        <td class="refs">${esc(l.refs.join(", "))}</td>
+        <td><span class="mono">${esc(l.mpn || l.value)}</span></td>
+        <td class="num">${l.need}${l.need_spare > l.need ? `<span class="sub">+${l.need_spare - l.need}</span>` : ""}</td>
+        <td class="num">–</td>
+        <td colspan="3"><span class="pill mismatch">${esc(t("Not bought"))}</span> <span class="sub">${esc(t("{s} only sells a full reel of {n} pcs ({p}). Choose an alternative.", { s: b.seller, n: intl(b.qty), p: money(b.total, b.currency) }))}</span></td>
+        <td class="num ${b.stock ? "" : "bad-text"}">${intl(b.stock)}</td>
+      </tr>`;
       const tips = (b.suggestions || []).map(s => `<span class="tip ${s.kind}" title="${esc(s.text)}">${s.kind === "save" ? "−" + money(b.saved || 0) : "+"}</span>`).join("");
       const stockBad = b.stock != null && b.stock < l.need_spare;
       return `<tr data-line="${esc(l.id)}">
@@ -414,7 +422,7 @@
         <td><span class="mono">${esc(ch ? ch.mpn : (l.mpn || (l.suggested ? l.suggested[0].mpn : l.value)))}</span>${ch ? ` <span class="pill ok">${esc(t("alt."))}</span>` : ""}</td>
         <td class="num">${l.need}${l.need_spare > l.need ? `<span class="sub">+${l.need_spare - l.need}</span>` : ""}</td>
         <td class="num"><b>${b.qty}</b></td>
-        <td>${esc(b.seller)} <span class="sub mono">${esc(b.sku)}</span>${b.impractical ? ` <span class="pill mismatch">${esc(t("full reel"))}</span>` : ""}</td>
+        <td>${esc(b.seller)} <span class="sub mono">${esc(b.sku)}</span></td>
         <td class="num">${money(b.unit)}</td>
         <td class="num"><b>${money(b.total)}</b>${tips}</td>
         <td class="num ${stockBad ? "bad-text" : ""}">${intl(b.stock)}</td>
@@ -424,17 +432,21 @@
       + `<button data-export="*">${esc(t("Cheapest mix (CSV)"))}</button>`;
     const carts = sellers.filter(s => /^digi-?key$/i.test(s)).map(s => `<button class="btn small primary" data-dkcart="${esc(s)}">${esc(t("Add to DigiKey cart"))}</button>`).join("")
       + sellers.filter(s => /^mouser$/i.test(s)).map(s => `<button class="btn small primary" data-mocart="${esc(s)}">${esc(t("Add to Mouser cart"))}</button>`).join("");
+    const o = orderSummary();
+    const orderTbl = `<div class="tbl-wrap order"><table class="tight"><thead><tr><th>${esc(t("Distributor"))}</th><th class="num">${esc(t("Parts"))}</th><th class="num">${esc(t("Freight"))}</th><th class="num">${esc(t("VAT {p} %", { p: o.vat_pct }))}</th><th class="num">${esc(t("Total"))}</th></tr></thead>
+      <tbody>${o.sellers.map(x => `<tr><td>${esc(x.seller)}${x.freeLeft > 0 ? `<div class="sub">${esc(t("{m} more gives free freight", { m: money(x.freeLeft, cur) }))}</div>` : ""}</td><td class="num">${money(x.merchandise)}</td><td class="num">${x.freight ? money(x.freight) : `<span class="ok-text">${esc(t("free"))}</span>`}</td><td class="num">${money(x.vat)}</td><td class="num"><b>${money(x.total)}</b></td></tr>`).join("")}</tbody>
+      ${o.sellers.length > 1 ? `<tfoot><tr><th>${esc(t("Order"))}</th><th class="num">${money(o.merchandise)}</th><th class="num">${money(o.freight)}</th><th class="num">${money(o.vat)}</th><th class="num">${money(o.total)}</th></tr></tfoot>` : ""}</table></div>`;
     return `<div class="buy-sum">
-        <div><div class="k">${esc(t("Total"))}</div><div class="big">${money(tot.shipping ? tot.shipping.total_with_shipping : total, cur)}</div></div>
+        <div><div class="k">${esc(o.vat_pct ? t("You pay (incl. freight and VAT)") : t("You pay (incl. freight)"))}</div><div class="big">${money(o.total, cur)}</div></div>
         <div><div class="k">${esc(t("Lines priced"))}</div><b>${tot.lines_priced || 0} / ${r.lines.length}</b></div>
         ${tot.saved_breaks ? `<div><div class="k">${esc(t("Saved by price breaks"))}</div><b class="ok-text">${money(tot.saved_breaks, cur)}</b></div>` : ""}
         ${tot.lines_unbuyable ? `<div><div class="k">${esc(t("Full reel only"))}</div><b class="bad-text">${tot.lines_unbuyable}</b></div>` : ""}
         ${tot.shipping ? `<div><div class="k">${esc(t("Distributors"))}</div><b>${esc(tot.shipping.sellers.join(", "))}</b></div>` : ""}
         <div class="grow"></div>
         <div class="row">${carts}<span class="menu"><button class="btn small" data-menu>${esc(t("Export"))} ▾</button><div class="hidden">${exp}</div></span></div>
-      </div>${cartBox()}
+      </div>${orderTbl}${cartBox()}
       <div class="tbl-wrap"><table><thead><tr><th>${esc(t("References"))}</th><th>${esc(t("Part"))}</th><th class="num">${esc(t("Need"))}</th><th class="num">${esc(t("Buy"))}</th><th>${esc(t("From"))}</th><th class="num">${esc(t("Unit"))}</th><th class="num">${esc(t("Line"))}</th><th class="num">${esc(t("Stock"))}</th></tr></thead>
-      <tbody>${rows}</tbody><tfoot><tr><th colspan="6">${esc(t("Total"))}</th><th class="num">${money(total, cur)}</th><th></th></tr></tfoot></table></div>
+      <tbody>${rows}</tbody><tfoot><tr><th colspan="6">${esc(t("Parts, before freight and VAT"))}</th><th class="num">${money(total, cur)}</th><th></th></tr></tfoot></table></div>
       <p class="hint" style="margin-top:8px">${esc(t("Need = quantity × {n} boards (+ spares). \"Buy\" is the cheapest quantity after price breaks, MOQ and packaging. Green badges: money saved by buying more; blue: much more for a little extra (hover).", { n: r.settings.boards }))}</p>`;
   }
   document.addEventListener("click", e => {
@@ -494,6 +506,23 @@
     if (!l.plan || l.plan.best.impractical) return null;
     const b = seller === "*" ? l.plan.best : l.plan.per_seller[seller];
     return b ? { sku: b.sku, qty: b.qty, seller: b.seller, mpn: l.mpn || (l.suggested ? l.suggested[0].mpn : ""), total: b.total } : null;
+  }
+  // What the order really costs: per distributor parts + freight (free above a limit), VAT on top.
+  function orderSummary() {
+    const r = state.result, rules = r.order_rules || { vat_pct: 0, fallback: 0, freight: {} };
+    const per = {};
+    r.lines.forEach(l => { const b = buyFor(l, "*"); if (b && b.total) per[b.seller] = (per[b.seller] || 0) + b.total; });
+    const vat = (rules.vat_pct || 0) / 100;
+    const sellers = Object.entries(per).sort().map(([s, m]) => {
+      const key = s.toLowerCase().replace(/[^a-z]/g, "");
+      const rule = Object.entries(rules.freight || {}).find(([n]) => key.startsWith(n));
+      const [fee, freeOver] = rule ? rule[1] : [rules.fallback || 0, 0];
+      const freight = freeOver && m >= freeOver ? 0 : fee;
+      return { seller: s, merchandise: m, freight, vat: (m + freight) * vat, total: (m + freight) * (1 + vat),
+               freeLeft: freight && freeOver ? freeOver - m : 0 };
+    });
+    const sum = k => sellers.reduce((a, x) => a + x[k], 0);
+    return { sellers, merchandise: sum("merchandise"), freight: sum("freight"), vat: sum("vat"), total: sum("total"), vat_pct: rules.vat_pct || 0 };
   }
   function cartItems(seller) { return state.result.lines.map(l => ({ l, b: buyFor(l, seller) })).filter(x => x.b && x.b.sku); }
   function digikeyCart(seller) {
@@ -631,28 +660,62 @@
   }
 
   const mm = v => v == null ? "–" : `${v} mm`;
+  // What to hold your footprint up against: the datasheet's own land pattern (IPC from its dimension
+  // table), else the part's real size / KiCad's footprint made for this part number.
+  function fpReference(cmp) {
+    if (!cmp) return null;
+    if (cmp.ds_footprint) {
+      const d = cmp.ds_footprint, b = d.body;
+      return { name: t("Datasheet"), label: d.label, rule: d.rule, overlay: d.pads, body: b,
+               geo: { pads: d.pads, graphics: b ? [{ k: "rect", l: "fab", x1: -b.w / 2, y1: -b.h / 2, x2: b.w / 2, y2: b.h / 2 }] : [] } };
+    }
+    if (cmp.ref_footprint) return { name: t("Reference"), label: cmp.ref_footprint.label, geo: cmp.ref_footprint.geometry };
+    return null;
+  }
+  function measTable(own, ref) {
+    const a = fpMeasures(own), b = ref ? fpMeasures(ref.geo) : {};
+    const rows = [["pads", t("Pads")], ["pitch", "Pitch"], ["padL", t("Pad length")], ["padW", t("Pad width")],
+                  ["outer", t("Outer span")], ["gap", t("Gap between rows")], ["epW", t("Thermal pad")]]
+      .filter(([k]) => a[k] != null || b[k] != null);
+    const st = (k, x, y) => x == null || y == null ? "unknown" : k === "pads" ? (x === y ? "ok" : "mismatch")
+      : Math.abs(x - y) <= 0.05 ? "ok" : Math.abs(x - y) <= 0.15 ? "warn" : "mismatch";
+    return `<div class="tbl-wrap"><table class="tight meas-cmp"><thead><tr><th></th><th class="num">${esc(t("Yours"))}</th>${ref ? `<th class="num">${esc(ref.name)}</th><th class="num">${esc(t("Diff."))}</th><th></th>` : ""}</tr></thead><tbody>
+      ${rows.map(([k, label]) => {
+        const x = a[k], y = b[k], d = x != null && y != null && k !== "pads" ? Math.round((x - y) * 1000) / 1000 : null;
+        return `<tr><td>${esc(label)}</td><td class="num">${x ?? "–"}</td>${ref ? `<td class="num">${y ?? "–"}</td><td class="num ${d && Math.abs(d) > 0.05 ? "warn-text" : "sub"}">${d == null ? "" : (d > 0 ? "+" : "") + d}</td><td>${dot(st(k, x, y))}</td>` : ""}</tr>`;
+      }).join("")}
+      </tbody></table></div>`;
+  }
   function pFootprint(l) {
     const fp = l.fp || {}, cmp = state.cmp[l.id], f = cmp && cmp.features;
-    const dsFp = cmp && cmp.ds_footprint;
-    const refs = [];
-    if (dsFp) refs.push({ key: "ds", name: t("Datasheet"), label: dsFp.label, pads: dsFp.pads, body: dsFp.body });
-    if (fp.overlay && fp.overlay.ref_pads) refs.push({ key: "lib", name: /producent|manufacturer/i.test(fp.overlay.ref_label) ? t("Manufacturer CAD") : /IPC/.test(fp.overlay.ref_label) ? "IPC" : t("KiCad library"), label: fp.overlay.ref_label, pads: fp.overlay.ref_pads });
-    refs.push({ key: "none", name: t("None"), label: "", pads: null });
-    const cur = refs.find(r => r.key === state.refView) || refs[0];
+    const ref = fpReference(cmp);
+    const over = [];
+    if (ref && ref.overlay) over.push({ key: "ds", name: t("Datasheet"), label: ref.label, pads: ref.overlay, body: ref.body });
+    if (fp.overlay && fp.overlay.ref_pads) over.push({ key: "lib", name: /producent|manufacturer/i.test(fp.overlay.ref_label) ? t("Manufacturer CAD") : /IPC/.test(fp.overlay.ref_label) ? "IPC" : t("KiCad library"), label: fp.overlay.ref_label, pads: fp.overlay.ref_pads });
+    const cur = over.find(r => r.key === state.refView) || { key: "none", pads: null };
     const checks = (fp.checks || []).filter(c => !isDsCheck(c));
     const rec = (fp.recognised || [])[0];
-    return `${refs.length > 1 ? `<div class="row"><span class="sub">${esc(t("Overlay:"))}</span><span class="seg">${refs.map(r => `<button class="${r === cur ? "on" : ""}" data-refview="${r.key}">${esc(r.name)}</button>`).join("")}</span></div>` : ""}
-      <div class="fp-svg">${renderFootprint(fp.geometry, cur.pads, { details: cur.key === "lib" ? fp.overlay.details : null, dims: true, refBody: cur.body })}</div>
-      <div class="legend"><span><i class="hatch"></i>${esc(t("Your footprint"))}</span>${cur.label ? `<span><i class="dash"></i>${esc(cur.label)}</span>` : ""}<span><i style="background:var(--bad);border-radius:50%"></i>${esc(t("Pin 1"))}</span><span style="color:var(--dim)">${esc(t("Dimensions in mm"))}</span></div>
-      ${f ? `<div class="meas"><div><span>${esc(t("Pads"))}</span>${f.pads}</div><div><span>Pitch</span>${mm(f.pitch)}</div><div><span>${esc(t("Pad (w × l)"))}</span>${f.pad_w ? `${f.pad_w} × ${f.pad_l}` : "–"}</div>
-        ${Object.values(f.rows).slice(0, 1).map(r => `<div><span>${esc(t("Outer / gap"))}</span>${r.outer} / ${r.inner ?? "–"}</div>`).join("")}
-        ${f.ep ? `<div><span>${esc(t("Thermal pad"))}</span>${f.ep[0]} × ${f.ep[1]}</div>` : ""}${f.body ? `<div><span>${esc(t("Body (Fab)"))}</span>${f.body[0]} × ${f.body[1]}</div>` : ""}</div>` : ""}
+    const hasDs = l.datasheet && l.datasheet.startsWith("http") && !l.kind;
+    const segs = [{ key: "none", name: t("alone") }, ...over];
+    return `<div class="fp-pair">
+        <figure><figcaption><b>${esc(t("Your footprint"))}</b>${over.length ? ` <span class="seg small">${segs.map(r => `<button class="${r.key === cur.key ? "on" : ""}" data-refview="${r.key}" title="${esc(r.label || "")}">${esc(r.key === "none" ? r.name : "+ " + r.name)}</button>`).join("")}</span>` : ""}</figcaption>
+          <div class="fp-svg">${renderFootprint(fp.geometry, cur.pads, { details: cur.key === "lib" ? fp.overlay.details : null, dims: true, refBody: cur.body })}</div></figure>
+        <figure><figcaption><b>${esc(ref ? ref.name : t("Datasheet"))}</b>${ref ? ` <span class="sub">${esc(ref.label)}</span>` : ""}</figcaption>
+          ${ref ? `<div class="fp-svg ref">${renderFootprint(ref.geo, null, { dims: true })}</div>`
+            : `<div class="fp-svg empty-ref">${esc(!cmp ? t("Reading the datasheet …") : l.kind ? t("No size known for the part.") : t("The datasheet's dimensions are only on its drawing – see below."))}</div>`}</figure>
+      </div>
+      ${fp.geometry ? measTable(fp.geometry, ref) : ""}
+      ${ref && ref.rule ? `<p class="sub">${esc(ref.rule)}</p>` : ""}
+      ${hasDs ? `<div class="ds-pic"><div class="cap">${esc(t("Recommended footprint, as drawn in the datasheet"))} · <a href="#" data-dspic="land">${esc(t("open the page"))}</a></div>
+        <img alt="" loading="lazy" data-dspic="land" src="/api/dsimage/${encodeURIComponent(state.job)}/${encodeURIComponent(l.id)}?kind=land" onload="dsPicPage(this)" onerror="this.parentNode.classList.add('hidden')"></div>` : ""}
+      ${f && f.body ? `<p class="sub">${esc(t("Body (Fab)"))}: ${f.body[0]} × ${f.body[1]} mm</p>` : ""}
       ${rec ? `<div class="recog">${esc(t("Recognised as"))} <b class="mono">${esc(rec.id)}</b> <span class="sub">(${rec.similarity} % ${esc(t("alike"))})</span>${(fp.recognised || []).slice(1).map(x => `<div class="sub mono">${esc(x.id)} · ${x.similarity} %</div>`).join("")}</div>` : ""}
-      ${!dsFp && cmp && !cmp.error && !l.kind ? `<p class="sub">${esc(cmp.dims ? t("The datasheet footprint can't be drawn: the dimension table lacks b, L or e.") : t("The datasheet has no dimension table as text – see the drawing under Datasheet."))}</p>` : ""}
       <h4>${esc(t("Checks"))}</h4>
       <ul class="checks">${checks.map(c => `<li>${dot(c.status)}<span><b>${esc(c.check)}</b><br><span class="sub">${esc(c.msg)}</span></span></li>`).join("")}</ul>`;
   }
 
+  // Which page a datasheet picture came from (X-Page header; the browser has the picture cached).
+  window.dsPicPage = img => fetch(img.src).then(r => { const p = r.headers.get("X-Page"); if (p) img.dataset.page = p; }).catch(() => {});
   function cmpTable(rows) {
     return `<div class="tbl-wrap"><table class="tight"><thead><tr><th>${esc(t("Measure"))}</th><th class="num">${esc(t("Datasheet"))}</th><th class="num">Footprint</th><th></th></tr></thead><tbody>${rows.map(r => `<tr title="${esc(r.note)}"><td>${esc(r.what)}${r.note ? `<div class="sub">${esc(r.note)}</div>` : ""}</td><td class="num">${esc(r.ds)}</td><td class="num">${esc(r.fp)}</td><td>${dot(r.status)}</td></tr>`).join("")}</tbody></table></div>`;
   }
@@ -660,25 +723,27 @@
     const [ds, dsMsg] = dsStat(l), cmp = state.cmp[l.id];
     let h = `<p class="hint">${dot(ds)} ${esc(dsMsg)}</p>`;
     if (!l.datasheet || !l.datasheet.startsWith("http")) return h + `<div class="empty">${esc(t("No datasheet link on this part."))}</div>`;
-    const pic = k => `<div class="ds-pic"><div class="cap">${esc(k === "land" ? t("Recommended footprint (from the datasheet)") : t("Package drawing (from the datasheet)"))}</div>
-      <img alt="" loading="lazy" data-dspic="${k}" title="${esc(t("Click to open the page"))}" src="/api/dsimage/${encodeURIComponent(state.job)}/${encodeURIComponent(l.id)}?kind=${k}" onerror="this.parentNode.classList.add('hidden')"></div>`;
-    h += `<div class="ds-pics">${pic("land")}${pic("outline")}</div>`;
+    const open = `<a class="btn small ghost" href="${esc(l.datasheet)}" target="_blank" rel="noopener">${esc(t("Open PDF"))}</a>`;
+    // Passives: a generic series datasheet, nothing to compare drawings with.
+    if (l.kind) return h + `<div class="row">${open}</div>`;
     if (!cmp) return h + `<p class="hint">${esc(t("Reading the datasheet …"))}</p>`;
     if (cmp.error) return h + `<div class="notice bad">${esc(cmp.error)}</div>`;
-    if (cmp.dims) {
-      h += `<h4>${esc(t("Package dimensions"))}: ${esc(cmp.dims.name)} <span class="sub">${esc(t("p. {p}", { p: cmp.dims.page }))}</span></h4>
-        ${cmp.dims.sure ? "" : `<p class="hint warn-text">${esc(t("The table could not be tied to the footprint's package with certainty."))}</p>`}${cmpTable(cmp.dims.rows)}`;
-    }
-    if (cmp.land) h += `<h4>${esc(t("Recommended land pattern"))} ${esc(cmp.land.label)}</h4><p class="hint">${esc(t("Letters mean different things at each maker – values that exist in your footprint are marked."))}</p>${cmpTable(cmp.land.rows)}`;
     if (cmp.pins) {
       h += `<h4>${esc(t("Pinout: symbol ↔ datasheet"))} ${dot(cmp.pins.status)}</h4><p class="hint">${esc(cmp.pins.summary)}</p>
         <div class="tbl-wrap"><table class="tight"><thead><tr><th class="num">${esc(t("Pin"))}</th><th>${esc(t("Symbol"))}</th><th>${esc(t("Datasheet"))}</th><th></th></tr></thead><tbody>
         ${cmp.pins.rows.map(r => `<tr><td class="num">${esc(r.num)}</td><td class="mono">${esc(r.symbol)}</td><td class="mono">${esc(r.datasheet)}</td><td>${dot(r.status)}</td></tr>`).join("")}</tbody></table></div>`;
     }
-    h += cmp.notes.map(n => `<div class="notice info">${esc(n)}</div>`).join("");
+    if (cmp.dims) {
+      h += `<h4>${esc(t("Package dimensions"))}: ${esc(cmp.dims.name)} <span class="sub">${esc(t("p. {p}", { p: cmp.dims.page }))}</span></h4>
+        ${cmp.dims.sure ? "" : `<p class="hint warn-text">${esc(t("The table could not be tied to the footprint's package with certainty."))}</p>`}${cmpTable(cmp.dims.rows)}`;
+    }
+    if (cmp.land) h += `<h4>${esc(t("Recommended land pattern"))} ${esc(cmp.land.label)}</h4>${cmpTable(cmp.land.rows)}`;
+    h += `<div class="ds-pic"><div class="cap">${esc(t("Package drawing (from the datasheet)"))}</div>
+      <img alt="" loading="lazy" data-dspic="outline" title="${esc(t("Click to open the page"))}" src="/api/dsimage/${encodeURIComponent(state.job)}/${encodeURIComponent(l.id)}?kind=outline" onload="dsPicPage(this)" onerror="this.parentNode.classList.add('hidden')"></div>`;
+    if (cmp.notes.length) h += `<ul class="notes">${cmp.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`;
     const pages = cmp.pages || [];
-    h += `<div class="row" style="margin-top:10px"><span class="sub">${esc(t("Datasheet pages:"))}</span>${(pages.length ? pages : [1]).map(p => `<button class="btn small" data-page="${p}">${esc(t("p. {p}", { p }))}</button>`).join("")}
-      <a class="btn small ghost" href="${esc(l.datasheet)}" target="_blank" rel="noopener">${esc(t("Open PDF"))}</a></div><div id="sidePdfWrap" class="hidden"><iframe id="sidePdf" title="PDF"></iframe></div>`;
+    h += `<div class="row" style="margin-top:10px"><span class="sub">${esc(t("Pages:"))}</span>${(pages.length ? pages : [1]).slice(0, 6).map(p => `<button class="btn small" data-page="${p}">${esc(t("p. {p}", { p }))}</button>`).join("")}
+      ${open}</div><div id="sidePdfWrap" class="hidden"><iframe id="sidePdf" title="PDF"></iframe></div>`;
     return h;
   }
 
@@ -813,7 +878,15 @@
     const pg = e.target.closest("#side [data-page]");
     if (pg) { showPage(pg.dataset.page); return; }
     const pic = e.target.closest("[data-dspic]");
-    if (pic) { const c = state.cmp[state.sel]; showPage(((c && c.pages) || [1])[0]); return; }
+    if (pic) {
+      e.preventDefault();
+      const c = state.cmp[state.sel];
+      const img = document.querySelector(`#side img[data-dspic="${pic.dataset.dspic}"]`);
+      const p = (img && img.dataset.page) || ((c && c.pages) || [1])[0];
+      if (state.ptab !== "ds") { state.ptab = "ds"; renderSide(); }
+      showPage(p);
+      return;
+    }
     const rv = e.target.closest("[data-refview]");
     if (rv) { state.refView = rv.dataset.refview; renderSide(); return; }
     const choose = e.target.closest("[data-choose]");

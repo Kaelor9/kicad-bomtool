@@ -290,6 +290,39 @@ def land_rows(feat, values):
 
 def build(line):
     """Everything the compare window shows for one BOM line."""
+    out = _build(line)
+    if not out.get("ds_footprint"):
+        ref = _reference(line)
+        if ref:
+            out["ref_footprint"] = ref
+    return out
+
+
+def _reference(line):
+    """Something to hold the footprint up against when the datasheet's dimensions aren't text:
+    the size the part really is (passives), or KiCad's own footprint made for this part number."""
+    from . import fplib  # noqa: PLC0415
+    if not fplib.status()["ready"]:
+        return None
+    kind, pkg = line.get("kind"), line.get("api_package") or ""
+    if kind and P.parse_package(pkg):
+        r = fplib.for_package(pkg, kind)
+        if r:
+            return dict(r, label=f"Komponentens størrelse: {P.describe(P.parse_package(pkg))} (IPC, KiCad-biblioteket)")
+    if not kind:
+        hits = fplib.by_mpn(line.get("mpn") or "")
+        if hits:
+            e = hits[0]
+            return {"id": e["id"], "geometry": fplib.geometry(e),
+                    "label": f"KiCad-bibliotekets footprint til {e['id'].split(':', 1)[1]} (efter producentens tegning)"}
+        if P.parse_package(pkg):
+            r = fplib.for_package(pkg, kind)
+            if r:
+                return dict(r, label=f"Pakken fra grosisten: {pkg} (KiCad-biblioteket)")
+    return None
+
+
+def _build(line):
     fp = line.get("fp") or {}
     geo = fp.get("geometry") or {}
     feat = features(geo)
@@ -344,8 +377,12 @@ def build(line):
 
     want = line.get("pin_names") or {}
     tables = dsdata.pin_tables(text)
-    if want and tables:
-        best = dsdata.best_pin_map(want, tables)
+    best = dsdata.best_pin_map(want, tables) if want and tables else None
+    # Names cut down to one letter ("V" for VDD1, VOA ...): the table was not read right - say nothing.
+    if best and sum(len(v) <= 1 for v in best["pins"].values()) > len(best["pins"]) / 3:
+        out["notes"].append("Pin-tabellen i databladet kunne ikke læses sikkert – tjek benene på tegningen.")
+        best = None
+    if best:
         m, s, diff, miss = dsdata.compare_pins(want, best["pins"])
         rows = []
         for num in sorted(set(want) | set(best["pins"]), key=_natkey):
@@ -363,7 +400,7 @@ def build(line):
         status = "mismatch" if diff else "ok" if m + s >= len(want) * 0.8 else "warn"
         out["pins"] = {"page": best["page"], "rows": rows, "status": status,
                        "summary": f"{m} ens, {s} samme type, {len(diff)} forskellige, {len(miss)} ikke i tabellen."}
-    elif want:
+    elif want and not tables:
         out["notes"].append("Ingen pin-tabel fundet i databladet.")
     return out
 
