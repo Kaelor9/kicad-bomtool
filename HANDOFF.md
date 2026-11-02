@@ -107,7 +107,13 @@ komponent lyser op.
   gruppe ens pads (+ én termisk pad).
 
 ### Venter på brugeren
-- Mouser Search API-nøgle (ansøgt, intet svar endnu).
+- **Mouser** (status 2. nov. 2026):
+  - **Search API:** nøglen er ikke udstedt. Mouser venter på en verifikationskode, som er sendt til brugerens
+    iCloud-adresse (den i Mouser-kontoen, ikke Gmail). Brugeren skal finde mailen (tjek "Uønsket") eller bede
+    Mouser (Live Chat / api@mouser.com) om at sende den igen.
+  - **Order/Cart API-nøgle:** findes, men står som "Pending". Den hører til feltet "Mouser Cart API", ikke Search.
+- **Nexar:** brugeren sætter Client ID/Secret ind (Evaluation app, Client Credentials er slået til). Nexar er ikke
+  testet med en rigtig nøgle før. Felter, som planen ikke giver adgang til, kan kræve, at forespørgslen gøres mindre.
 - Skærmbilleder af C1, C9, D8, BOOT1/RESET1 (Footprint-fanen) og J8.
 
 ---
@@ -499,6 +505,7 @@ komponent lyser op.
 
 Nyeste øverst. Én linje pr. ændring: dato · version/branch · hvad og hvorfor.
 
+- 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · HANDOFF: status for Mouser- og Nexar-nøgler (ingen kodeændring).
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Brugerens feedback på footprint-fanen:
   - `bomtool/dsland.py` aflæser databladets anbefalede footprint fra tegningen og bruges i analysen og i
     `fpcompare`;
