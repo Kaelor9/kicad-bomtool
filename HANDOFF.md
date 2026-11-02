@@ -32,9 +32,9 @@ Repo: <https://github.com/Kaelor9/kicad-bomtool> (offentligt) · Brugerens lokal
 | | |
 |---|---|
 | Seneste udgivelse | **v1.6.1** (2. nov. 2026) – `KiCadBOM-windows.zip` |
-| På branch, ikke udgivet | Rettelse: programvinduet falder tilbage til browseren (se afsnit 3). Skal udgives som **v1.6.2** |
+| På branch, ikke udgivet | (1) Programvinduet faldt tilbage til browseren. (2) Footprint aflæses fra databladets tegning, ens retning/skala i sammenligningen, printets bagside, klarere kolonner, genkendelse uden "diode for sikring" (se afsnit 3 og 11). Skal udgives som **v1.7.0** |
 | Version i kildekoden | `bomtool/__init__.py` siger `1.0.0`. CI sætter den rigtige ud fra tagget |
-| Tests | `python -m tests.test_units` → ALL PASSED |
+| Tests | `python -m tests.test_units` → ALL PASSED · `python -m tests.test_pipeline` → OK (med KiCad-demoer, se afsnit 10) |
 
 ---
 
@@ -78,14 +78,37 @@ komponent lyser op.
     - skriver årsagen til `%USERPROFILE%\.kicad_bomtool\window.log`, når vinduet ikke kan åbnes
       (exe'en har ingen konsol).
   - **Mangler:**
-    1. Brugeren skal udgive v1.6.2 (`git tag v1.6.2 && git push origin v1.6.2` fra `main`, efter merge).
+    1. Brugeren skal udgive næste version (`git tag v1.7.0 && git push origin v1.7.0` fra `main`, efter merge).
     2. Bekræft på Windows, at vinduet åbner.
     3. Åbner det stadig i browseren, så send indholdet af `window.log`, så den rigtige årsag kendes.
   - **Midlertidig løsning for brugeren:** højreklik zip'en → Egenskaber → "Fjern blokering", inden den
     pakkes ud. Eller tryk "Update now", som også virker i browseren.
 
+- **Brugerens feedback 2. nov. 2026 (skærmbilleder af IC2, F1, BOOT1/RESET1, SOT-23-dele):**
+  - **Lavet på branch:**
+    - footprint aflæst fra databladets tegning (`bomtool/dsland.py`);
+    - de to footprint-kasser flugter og har samme skala;
+    - referencen vender som brugerens footprint;
+    - F1 bliver ikke længere "genkendt" som diode;
+    - kolonnerne har nu navne i stedet for "1 FP / 2 DS / 3 Buy";
+    - "+2" forklares;
+    - printets bagside kan vises;
+    - pænere mållinjer.
+  - **Ikke afklaret, kræver skærmbilleder fra brugeren:** C1, C9 og D8 "ser mærkelige ud", BOOT1/RESET1's
+    footprint ser mærkeligt ud, og J8's mål ser mærkelige ud. Projektet ligger kun hos brugeren, så de dele kunne
+    ikke ses. Målene er gjort generelt pænere (tekst uden for pilene, ingen 0-mål), men J8 er ikke set.
+  - **"Vis det til venstre":** tolket som den tomme "Datasheet"-kasse ved siden af brugerens footprint. Den
+    aflæste tegning vises dér, og den kan lægges oven på brugerens footprint med "+ Datasheet".
+
+### Næste skridt (forslag)
+- **Diodes Inc. land patterns** skriver bogstaver (X, Y, C …) på tegningen og værdierne i en tabel ved siden af.
+  `dsland` læser kun tal på tegningen. Udvid med bogstav → tabel-opslag.
+- **QFN med pads i forskellige størrelser** (fx TI VQFN-HR, TPS62902) aflæses ikke endnu: `_pads` tager kun én
+  gruppe ens pads (+ én termisk pad).
+
 ### Venter på brugeren
 - Mouser Search API-nøgle (ansøgt, intet svar endnu).
+- Skærmbilleder af C1, C9, D8, BOOT1/RESET1 (Footprint-fanen) og J8.
 
 ---
 
@@ -131,8 +154,9 @@ komponent lyser op.
 | Fil | Indhold |
 |---|---|
 | `bomtool/datasheet.py` | Henter datablad og tjekker, om det er det rigtige, og pakkenavne. |
+| `bomtool/dsland.py` | Aflæser databladets anbefalede footprint fra selve tegningen (vektorgrafik: pads, pile, mål). |
 | `bomtool/dsdata.py` | Mål-, pad- og pin-tabeller fra databladets tekst. |
-| `bomtool/dsimage.py` | Udsnit af databladets tegninger (pypdfium2, global lås). |
+| `bomtool/dsimage.py` | Udsnit af databladets tegninger (pypdfium2, global lås `_PDFIUM`, som `dsland` også bruger). |
 | `bomtool/fpcompare.py` | Sammenligningen: footprint mod datablad og beregnet IPC-landpattern. |
 
 **Kontrol 3: køb**
@@ -152,7 +176,7 @@ komponent lyser op.
 | `bomtool/export.py` | Excel-BOM. |
 | `bomtool/history.py` | Gemte analyser og forskelle mellem to analyser. |
 | `bomtool/web/index.html`, `app.js`, `style.css` | Brugerfladen. |
-| `bomtool/web/footprint.js` | Footprint-tegning og `BoardView` (printvisning). |
+| `bomtool/web/footprint.js` | Footprint-tegning (`renderFootprint`, `renderFootprintPair` = to tegninger i samme skala, `fpOrientLike` = drej referencen som brugerens) og `BoardView` (printvisning med top/bund). |
 | `bomtool/web/i18n.js` | Danske UI-tekster (UI'et er skrevet på engelsk). |
 
 **Tests**
@@ -201,6 +225,9 @@ komponent lyser op.
   - Chip-størrelser (0402/0603/0805/1206/1210 …) sammenlignes, så fx 0603-footprint med 0805-del fanges.
 - Kontroller af pins mod pads; pins med samme navn behandles som samme pad.
 - **Footprint-genkendelse ud fra geometrien** (`bomtool/fplib.py`):
+  - viser kun match på mindst 90 % lighed (`MIN_SIMILARITY`); under det var det gæt (0201 for 0402, diode for sikring);
+  - biblioteker for én slags dele (Diode_, Inductor_, Connector …) vises ikke for en anden slags reference
+    (`TYPED_LIBS`/`REF_KINDS`): F1 kan ikke blive en D_MELF;
   - indeks over ca. 15.100 KiCad-footprints, bygget i baggrunden første gang (ca. 90 s) og cachet som `fpindex-*.json.gz`;
   - fanger selvlavede footprints med dårlige navne;
   - `by_mpn` finder KiCads footprint til et varenummer, fx `SW_SPST_PTS810`.
@@ -213,6 +240,16 @@ komponent lyser op.
   - pad-layout-tabeller;
   - pin-tabeller.
 - **IPC-7351-landpattern beregnes** ud fra databladets mål (`bomtool/fpcompare.py`) og tegnes ved siden af brugerens footprint.
+- **Databladets anbefalede footprint aflæses fra tegningen** (`bomtool/dsland.py`), når det er vektorgrafik:
+  - pads er rektangler, der er udfyldte, omrids eller fire løse sider med runde hjørner (TI);
+  - mållinjer er par af pilespidser, og tallet nærmest linjen er målet ("1.5 ± 0.05 (.059)" → 1.5, TI "6X (1.1)" → 1.1);
+  - pilespidserne rammer pad-kanter eller centerlinjer, så kanterne fastlægges i mm ud fra tallene alene.
+    Tegningens proportioner bruges aldrig, fordi mange tegninger ikke er i skala;
+  - har databladet flere varianter (Bourns "Style 1/2"), vælges den, der ligner brugerens footprint mest;
+  - padsene drejes og nummereres som brugerens, så de kan lægges oven på ("+ Datasheet");
+  - under analysen giver det kontrollen "Footprint ↔ databladets tegning". Passer den, tilsidesætter den den
+    generiske IPC-størrelse ("Pads ↔ komponentens fysiske mål").
+  - Testet: Bourns MF-MSMF (begge styles) og TI TPL5010 (SOT-23-6).
 - **Reference, når databladet ikke har mål som tekst:**
   - passive komponenter sammenlignes med delens rigtige størrelse;
   - andre komponenter sammenlignes med KiCads footprint til MPN'en.
@@ -246,7 +283,17 @@ komponent lyser op.
 - **Overblik øverst:** fliser for de 3 kontroller plus ordrepris, og et klik filtrerer tabellen.
 - **Faner:** Components, Purchase, Distributor BOM, Excluded og Changes.
 - **Panelet til højre** åbner selv på den første kontrol med et problem.
+- **Footprint-fanen:** dit footprint og referencen står ved siden af hinanden i samme skala og samme
+  rammestørrelse, flugter (CSS subgrid), og referencen er drejet (0/90/180/270°, spejlet kun for bundside-dele),
+  så pin-numrene ligger samme sted. Den lange forklaring står under tegningen.
+- **Mållinjer:** teksten flyttes uden for pilene, når den ikke er plads, og mål på 0 vises ikke.
+- **Kolonnerne** hedder "Part ↔ FP", "FP ↔ datasheet" og "Buyable" (før "1 FP / 2 DS / 3 Buy"). Fliserne har de
+  samme navne uden numre.
+- **Reservedele:** "+2" ved behovet har en forklaring ved hover. Passive får +10 %, dog mindst 2 stk.
+  ("More options" før analysen).
 - **Printvisning** (`footprint.js` → `BoardView`):
+  - knapperne Top / Bottom / Both. Bottom viser printet nedefra (spejlvendt), og vælger man en del, der kun sidder
+    på den skjulte side, vendes printet selv;
   - printkant og rigtige pads;
   - fejl er rødtonede og advarsler orange;
   - den valgte komponent lyser blåt, og resten dæmpes;
@@ -316,6 +363,10 @@ komponent lyser op.
 | API-nøgler gemmes kun lokalt i `~/.kicad_bomtool/config.json` | Sikkerhed: nøgler sendes kun til grosisternes egne API'er og aldrig i chat. |
 | User-Agent forfalskes ikke for at komme forbi bot-beskyttelse | Etik og vilkår. |
 | **HANDOFF.md er index og opdateres i hver ændring** | Brugerens ønske, så en anden AI kan samle projektet op. |
+| **Databladets tegnede footprint slår IPC og generiske størrelser** | Det er producentens anbefaling. F1 (Bourns MF-MSMF050/40X) fulgte tegningen, men blev vist rødt mod en generisk 1812. |
+| Tegninger læses ud fra tallene, aldrig ud fra proportionerne | Bourns tegner pads ikke i skala. Hellere intet footprint end et forkert. |
+| Referencen drejes, så den vender som brugerens footprint | Brugerens ønske ("footprints skal vende ens"). |
+| Genkendelse kun ved ≥ 90 % og kun i biblioteker for samme slags del | Brugeren syntes, det var mærkeligt, at en sikring blev "genkendt" som diode. |
 
 ---
 
@@ -324,7 +375,7 @@ komponent lyser op.
 **Byg, release og opdatering**
 - **v1.6.x åbnede i browseren i stedet for eget vindue:** sandsynligvis fordi Stifinder mærker de udpakkede
   zip-filer som "fra internettet", og så vil .NET ikke indlæse DLL'erne. Undtagelsen blev fanget uden spor.
-  Rettet på branch (afventer v1.6.2): unblock ved start og `window.log`. Se afsnit 3.
+  Rettet på branch (afventer v1.7.0): unblock ved start og `window.log`. Se afsnit 3.
 - **v1.5.0 og v1.6.0 lukkede ved start i programvinduet** (.NET `System.Drawing.Icon` ArgumentException): vinduet fik
   ikonet som `.png`, men WinForms tager kun `.ico`. v1.6.1 gav en `.ico` i stedet. Den `.ico` består af
   PNG-rammer, som .NET Framework heller ikke altid accepterer, så nu gives der slet ingen ikonfil på Windows.
@@ -359,6 +410,21 @@ komponent lyser op.
   den ene side kommer fra et IPC-navn.
 - **En bar "SOT-23" i TI-datablade passede ikke med SOT-23-8:** bar nævnelse matcher nu enhver SOT-23-variant.
 - **Mål for 2-pad-komponenter blev mærket på forkert akse:** "på tværs" er nu linjen mellem de to terminaler.
+
+**Datablad-tegninger (dsland)**
+- **Bourns-tegningen er ikke i skala** (pads tegnet 23 × 40 pt, men 1.5 × 3.2 mm): en skala-baseret aflæsning gav
+  forkerte pads. Løst ved kun at bruge mållinjer og tal.
+- **Pilespidser blev taget som pads:** trekanter (3 hjørner) er nu pile, og kun former med hjørner på alle fire sider
+  er pads.
+- **Pad tegnet to gange** (flade + omrids): omridset "indeholdt" fladen, så begge blev smidt ud. Nu slås næsten ens
+  former sammen.
+- **Tal splittet forkert** ("3.2 ± 0.1" gav "2.0"): teksten samles nu tegn for tegn med pdfiums "loose" tegnbokse
+  (punktummet har ellers en lav boks).
+- **Usynlig tekst** i PDF'en ("1.0") stjal en mållinje: kun tal med synligt blæk tæller.
+- **TI tegner hver pad-side og hvert hjørne som separate stier:** rektangler samles af løse linjer (`_line_rects`).
+- **TI "4X (0.95)"** gælder for alle nabopar med samme afstand i tegningen.
+- **Området under overskriften løb ind i grafer:** stopper nu ved næste overskrift eller grå sektionsbjælke.
+- **pypdfium2 5.x** har `get_bounds()` i stedet for `get_pos()`. Begge håndteres.
 
 **Pris og alternativer**
 - **Pris på 78.908 kr.** fra tilbud, der kun fandtes som hel rulle: markeres nu som `impractical`.
@@ -413,6 +479,17 @@ komponent lyser op.
   CI bygger og udgiver, og programmet tilbyder derefter opdateringen.
 - **Fejlfinding, hvis vinduet ikke åbner:** se `%USERPROFILE%\.kicad_bomtool\window.log`. Ved crash: se Windows'
   Logbog → Windows-logfiler → Program → ".NET Runtime"/"Application Error".
+- **Test i en Linux-container (AI-session):** KiCad er ikke installeret. Hent biblioteket og demoerne:
+
+  ```
+  git clone --depth 1 https://gitlab.com/kicad/libraries/kicad-footprints.git <dir>/share/footprints
+  git clone --depth 1 --filter=blob:none --sparse https://gitlab.com/kicad/code/kicad.git ksrc && (cd ksrc && git sparse-checkout set demos)
+  ```
+
+  Læg `demos` ved siden af `footprints` (`<dir>/share/demos`) og sæt `KICAD_FOOTPRINT_DIR=<dir>/share/footprints`.
+  Kør derefter `python -m bomtool --no-browser` og styr brugerfladen med Playwright (Chromium er installeret).
+  `openair-max`-demoen har dele på begge sider. Demoernes databladlinks går til LCSC (bot-beskyttet), så skift et
+  link til en producent-PDF for at teste datablad-funktioner. Toshibas side afviser automatiske hentninger.
 - **Commit-beskeder** er på engelsk og slutter med `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **AI-sessioner i skyen** arbejder på en `claude/*`-branch. Brugeren merger til `main` og tagger.
 
@@ -422,6 +499,15 @@ komponent lyser op.
 
 Nyeste øverst. Én linje pr. ændring: dato · version/branch · hvad og hvorfor.
 
+- 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Brugerens feedback på footprint-fanen:
+  - `bomtool/dsland.py` aflæser databladets anbefalede footprint fra tegningen og bruges i analysen og i
+    `fpcompare`;
+  - de to footprints vises i samme skala, flugtende og med samme retning;
+  - genkendelse kræver ≥ 90 % og samme slags del;
+  - kolonnerne har navne i stedet for numre, og "+2" i reserve forklares;
+  - printet kan vises fra bunden;
+  - mållinjerne er pænere;
+  - nye enhedstests: `test_dsland`, `test_recognise_kind`.
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Programvinduet faldt tilbage til browseren på v1.6.x.
   Nu unblockes zip-udpakkede filer, Windows-vinduet får ikke en ikonfil, og fejlen logges i `window.log`.
   HANDOFF.md er omorganiseret til index (regler, status, åbne sager, kodekort, ændringslog), og `CLAUDE.md`

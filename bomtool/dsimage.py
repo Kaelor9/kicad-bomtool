@@ -12,7 +12,8 @@ from . import packages as P
 # PDFium is not thread-safe: two pictures rendered at once crash the whole process.
 _PDFIUM = threading.Lock()
 
-LAND = ("example board layout", "recommended land", "recommended pcb", "recommended footprint", "suggested pad",
+LAND = ("example board layout", "recommended land", "recommended pad", "recommended pcb", "recommended footprint",
+        "suggested pad",
         "suggested footprint", "footprint recommendation", "land pattern", "pcb layout", "recommended solder", "footprint")
 OUTLINE = ("package outline", "outline dimensions", "package dimensions", "package drawing", "mechanical data",
            "mechanical drawing", "dimensions")
@@ -211,6 +212,13 @@ def _image(data, text, kind, fp_pkg):
 
 def _cut(doc, idx, x, y, scale):
     """The drawing under the heading at (x, y), or None when that region is running text."""
+    r = cut_region(doc, idx, x, y, scale)
+    return r[0] if r else None
+
+
+def cut_region(doc, idx, x, y, scale=2.2):
+    """(picture, (left, top, right, bottom) in points from the page's top-left) of the drawing under
+    the heading at (x, y), or None when that region is running text."""
     page = doc[idx]
     pw, h = page.get_size()
     img = page.render(scale=scale).to_pil()
@@ -238,7 +246,7 @@ def _cut(doc, idx, x, y, scale):
     # A heading with hardly anything under it (a table cell, a caption) is not the drawing.
     if crop.height < 50 * scale:
         return None
-    return crop
+    return crop, (left / scale, top / scale, pw, bottom / scale)
 
 
 def _gutter(img, x0, x1, min_w):
@@ -271,4 +279,4 @@ def fp_package(footprint):
     return P.parse_package((footprint or "").split(":")[-1])
 
 
-__all__ = ["available", "image", "fp_package"]
+__all__ = ["available", "image", "fp_package", "cut_region", "LAND"]

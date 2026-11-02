@@ -5,7 +5,7 @@ import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
-from . import alternatives, bom, datasheet, distbom, footprint, fplib, packages as P, pricing
+from . import alternatives, bom, datasheet, distbom, dsland, footprint, fplib, packages as P, pricing
 from . import fields as F
 from .kicad import Project, load_kicad_mod
 from .providers import ProviderError, make_providers
@@ -327,7 +327,7 @@ class Analysis:
                 rep["status"] = "warn"
         rep["geometry"] = comp.get("geometry")
         line["pin_names"] = comp.get("pin_names") or {}
-        self._recognise(rep, pkg_text)
+        self._recognise(rep, pkg_text, line["refs"][0] if line.get("refs") else None)
         rep["geometry_source"] = comp.get("geometry_source", "")
         line["fp"] = rep
         for w in comp.get("warnings", []):
@@ -335,12 +335,12 @@ class Analysis:
                 line["warnings"].append(w)
 
     @staticmethod
-    def _recognise(rep, part_pkg_text):
+    def _recognise(rep, part_pkg_text, ref=None):
         """Which KiCad library footprint has the same geometry? Catches footprints with meaningless or
         wrong names: the geometry tells what package it really is."""
         if not fplib.status()["ready"] or not (rep.get("geometry") or {}).get("pads"):
             return
-        found = fplib.recognise(rep["geometry"])
+        found = fplib.recognise(rep["geometry"], ref=ref)
         if not found:
             return
         rep["recognised"] = found
@@ -379,6 +379,7 @@ class Analysis:
             except Exception as e:  # noqa: BLE001 - a broken PDF must not stop the analysis
                 chk = {"check": "Datablad", "status": "unknown", "msg": f"Databladet kunne ikke læses: {e}"}
             line["fp"]["checks"].append(chk)
+            self._drawn_land(line, fp_pkg)
             try:
                 # Only the explicit marking - "obsolete" etc. also appear in legal notices.
                 if re.search(r"not\s+recommended\s+for\s+new\s+designs?", datasheet.text_for(line["datasheet"]), re.I):
@@ -393,6 +394,39 @@ class Analysis:
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             list(ex.map(work, todo))
+
+    @staticmethod
+    def _drawn_land(line, fp_pkg):
+        """Hold the footprint up against the recommended footprint drawn in the datasheet. When they
+        agree, that beats a generic size (the manufacturer may want other pads than IPC's)."""
+        geo = (line.get("fp") or {}).get("geometry")
+        if not geo or not geo.get("pads"):
+            return
+        try:
+            drawn = dsland.read(line["datasheet"], fp_pkg, geo)
+        except Exception:  # noqa: BLE001 - an unreadable drawing is just not used
+            drawn = None
+        if not drawn:
+            return
+        line["ds_land"] = drawn
+        res = footprint.compare_geometry(geo, {"pads": drawn["pads"]})
+        if res.get("status") == "unknown":
+            return
+        rep = line["fp"]
+        rep["checks"].append({"check": "Footprint ↔ databladets tegning", "status": res["status"],
+                              "msg": f"Databladets anbefalede footprint (s. {drawn['page']}): {res['msg']}."})
+        order = {"ok": 0, "unknown": 1, "partial": 1, "warn": 2, "mismatch": 3}
+        overruled = False
+        if res["status"] == "ok":
+            for c in rep["checks"]:
+                if c["check"].startswith(("Pads ↔ komponentens fysiske mål", "Geometri ↔ IPC")) and c["status"] != "ok":
+                    c["status"] = "ok"
+                    c["msg"] += " – men footprintet følger databladets egen tegning, og den gælder."
+                    overruled = True
+        if overruled:
+            rep["status"] = max((c["status"] for c in rep["checks"]), key=lambda st: order.get(st, 0))
+        elif order.get(res["status"], 0) > order.get(rep.get("status"), 0):
+            rep["status"] = res["status"]
 
     @staticmethod
     def _geo_sig(geo):

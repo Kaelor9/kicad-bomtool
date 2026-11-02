@@ -122,8 +122,34 @@ def geometry(entry):
     return g
 
 
-def recognise(geo, top=3):
-    """Library footprints with the same geometry as `geo`, best first: [{id, status, max_offset, size_diff}]."""
+# Libraries that only hold one kind of part. A footprint is not "recognised" as one of these when the
+# reference says it is another kind (a fuse F1 is not a D_MELF diode even if the pads look alike).
+# Libraries not listed here (Package_*, ...) fit any part.
+TYPED_LIBS = {"Resistor_": "R", "Capacitor_": "C", "Inductor_": "L", "Diode_": "D", "LED_": "D", "Fuse": "F",
+              "Crystal": "Y", "Oscillator": "Y", "Connector": "J", "Button_Switch": "SW", "Relay": "K",
+              "Buzzer_Beeper": "BZ", "Transformer": "T", "Varistor": "RV", "Potentiometer": "RV"}
+# Reference prefix -> the kinds it may be (KiCad and common habits).
+REF_KINDS = {"R": {"R"}, "RN": {"R"}, "C": {"C"}, "L": {"L"}, "FB": {"L", "R"}, "FL": {"L", "C"},
+             "D": {"D"}, "LED": {"D"}, "TVS": {"D"}, "F": {"F", "R"}, "PTC": {"F", "R"}, "Y": {"Y"}, "X": {"Y"},
+             "J": {"J"}, "P": {"J"}, "CN": {"J"}, "CON": {"J"}, "SW": {"SW"}, "S": {"SW"}, "BOOT": {"SW"},
+             "RESET": {"SW"}, "BTN": {"SW"}, "K": {"K"}, "BZ": {"BZ"}, "LS": {"BZ"}, "T": {"T", "L"},
+             "RV": {"RV", "R"}, "VR": {"RV", "R"}}
+MIN_SIMILARITY = 90   # below this the "match" is only a vague likeness (an 0201 for an 0402) and confuses more than it helps
+
+
+def _kind_ok(eid, ref):
+    """May library footprint `eid` be shown as what part `ref` is?"""
+    import re as _re  # noqa: PLC0415
+    prefix = _re.match(r"[A-Za-z]+", ref or "")
+    kinds = REF_KINDS.get(prefix.group(0).upper()) if prefix else None
+    lib = eid.split(":", 1)[0]
+    lib_kind = next((k for name, k in TYPED_LIBS.items() if lib.startswith(name)), None)
+    return kinds is None or lib_kind is None or lib_kind in kinds
+
+
+def recognise(geo, top=3, ref=None):
+    """Library footprints with the same geometry as `geo`, best first: [{id, status, max_offset, size_diff}].
+    `ref` (e.g. "F1") leaves out libraries for other kinds of parts."""
     entries = _state["entries"]
     if not entries or not geo or not geo.get("pads"):
         return []
@@ -135,6 +161,7 @@ def recognise(geo, top=3):
     cands = [e for e in entries if e["sig"][0] == n and abs(e["sig"][1] - s0) <= 0.2 and abs(e["sig"][2] - s1) <= 0.2
              and abs(e["sig"][3] - area) <= max(0.3, area * 0.35)]
     scored = []
+    cands = [e for e in cands if _kind_ok(e["id"], ref)]
     for e in cands[:400]:
         r = compare_geometry({"pads": pads, "bottom": geo.get("bottom")}, _geo(e))
         if r.get("status") in ("ok", "warn") and r.get("max_offset", 9) <= 0.2:
@@ -142,6 +169,8 @@ def recognise(geo, top=3):
     scored.sort(key=lambda t: (t[0], len(t[1])))
     out = []
     for score, eid, r in scored[:top]:
+        if round(100 - score * 200) < MIN_SIMILARITY:
+            continue
         out.append({"id": eid, "status": r["status"], "max_offset": r["max_offset"], "size_diff": r["size_diff"],
                     "similarity": max(0, round(100 - score * 200)), "package": _describe(eid)})
     return out

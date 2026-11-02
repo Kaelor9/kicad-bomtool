@@ -356,7 +356,7 @@ def _build(line):
             out["dims"] = {"name": name, "page": table["page"], "sure": bool(fits),
                            "table": {k: _fmt(v) for k, v in table["dims"].items()},
                            "rows": compare_dims(feat, table["dims"], fam)}
-            land = ipc_pads(geo, feat, table["dims"], fam)
+            land = None if out.get("ds_footprint") else ipc_pads(geo, feat, table["dims"], fam)
             if land:
                 land["label"] = f"Databladet (s. {table['page']}) → IPC-7351"
                 out["ds_footprint"] = land
@@ -367,6 +367,20 @@ def _build(line):
                                 f", men ingen for {out['fp_pkg'] or fp_name}.")
     else:
         out["notes"].append("Ingen mål-tabel fundet som tekst – målene står kun på tegningen (se siden herunder).")
+
+    # The datasheet's own recommended footprint, read from its drawing, beats one worked out from the
+    # package dimensions: it is what the manufacturer says to put on the board.
+    if not line.get("kind"):
+        try:
+            from . import dsland  # noqa: PLC0415
+            drawn = line.get("ds_land") or dsland.read(url, fp_pkg, geo)
+        except Exception:  # noqa: BLE001 - a drawing that can't be read is just not shown
+            drawn = None
+        if drawn:
+            out["ds_footprint"] = {"pads": drawn["pads"], "body": None, "label": drawn["label"],
+                                   "rule": drawn["rule"], "drawn": True}
+            if drawn["page"] not in out["pages"]:
+                out["pages"].insert(0, drawn["page"])
 
     lands = dsdata.pad_layouts(text)
     if lands:

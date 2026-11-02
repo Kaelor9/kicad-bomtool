@@ -44,11 +44,15 @@ som også står som kolonner i tabellen:
 
 Øverst giver tre kontrolfliser **overblikket** (fejl/at tjekke pr. trin) – klik på en for kun at se de
 linjer, der har problemer. Kontrolpanelet viser også **printet** med alle komponenter; den valgte lyser op,
-og fejl/advarsler har rød/orange kant. Klik på en komponent på printet for at vælge den.
+og fejl/advarsler har rød/orange kant. Klik på en komponent på printet for at vælge den. Med *Top / Bottom /
+Both* ses printet forfra, nedefra (spejlvendt) eller begge sider.
 
-Footprint-tegningen har skraverede pads og mål (yderkant, gab, padstørrelse, pitch). Oven på kan lægges
-**databladets footprint** – beregnet efter IPC-7351 ud fra databladets pakketabel – eller KiCad-biblioteket,
-og under tegningen vises **udsnittet fra selve databladet** (anbefalet footprint / pakketegning).
+Footprint-tegningen har skraverede pads og mål (yderkant, gab, padstørrelse, pitch). Ved siden af står
+**databladets footprint** i samme skala og drejet, så det vender som dit. Det er **aflæst fra databladets egen
+tegning** (pads, mållinjer og tal), når tegningen er vektorgrafik. Ellers er det beregnet efter IPC-7351 ud
+fra databladets pakketabel, eller hentet fra KiCad-biblioteket. Det kan også lægges oven på dit
+("+ Datasheet"). Under tegningen vises **udsnittet fra selve databladet** (anbefalet footprint /
+pakketegning).
 
 **Alternativer** søges automatisk, når en komponent ikke kan købes som valgt (ikke på lager, kun hel rulle,
 udgået, ikke fundet) eller ikke passer på sit footprint. Footprintet er facit, og den valgte komponents specs
@@ -111,8 +115,10 @@ Uden nøgler virker alt undtagen priser, lager, datablade fra grosist og alterna
 ## Begrænsninger
 
 - Alternative IC'er er forslag – pinout og elektriske data skal altid tjekkes i databladet.
-- Datablad-kontrollen læser tekst: pakkenavne, mål-tabeller og pin-tabeller. Står målene kun som
-  tal på selve tegningen, vises tegningen i stedet, så du kan sammenligne med footprintets målestreger.
+- Datablad-kontrollen læser tekst: pakkenavne, mål-tabeller og pin-tabeller. Det anbefalede footprint
+  aflæses fra tegningen, når den er vektorgrafik med mållinjer (fx Bourns, TI). Tegninger, hvor målene står
+  som bogstaver med en tabel ved siden af (fx Diodes), eller som er billeder, aflæses ikke. Så vises
+  tegningen i stedet.
   Scannede PDF'er og produktsider (fx LCSC-links) kan ikke læses. Den sikreste kontrol er stadig
   at uploade producentens `.kicad_mod`.
 - Mouser-kurven er bygget efter Mousers API-dokumentation, men ikke afprøvet med en rigtig nøgle.

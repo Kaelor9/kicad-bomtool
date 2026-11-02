@@ -257,6 +257,40 @@ def test_real_projects():
         D.text_for = orig
 
 
+def test_dsland():
+    """Reading the recommended footprint from a datasheet drawing (synthetic shapes, no PDF needed)."""
+    from bomtool import dsland
+    # Bourns MF-MSMF style 2: pads drawn 23 x 40 pt, NOT to scale, with the measures 1.68, 2.95 and 3.1.
+    pads = [(382.8, 325.2, 406.1, 365.6, True), (447.0, 325.2, 469.7, 365.6, True)]
+    arrows = [(383.4, 379.3, "x", -1), (406.3, 379.3, "x", 1), (406.9, 379.4, "x", -1), (446.0, 379.4, "x", 1),
+              (487.8, 325.3, "y", -1), (487.8, 365.3, "y", 1)]
+    texts = [(1.68, 361.2, 375.4), (3.1, 470.6, 375.5), (2.95, 488.1, 340.2)]
+    dims = dsland._dims(arrows, texts)
+    check("dimension lines get their numbers", sorted(d[3] for d in dims) == [1.68, 2.95, 3.1], str(dims))
+    xs, _ = dsland._solve(pads, dims, "x")
+    ys, _ = dsland._solve(pads, dims, "y")
+    w = [round(b - a, 2) for a, b in xs]
+    gap = round(xs[1][0] - xs[0][1], 2)
+    check("pads from the measures, not the drawing's scale", w == [1.68, 1.68] and gap == 3.1 and
+          round(ys[0][1] - ys[0][0], 2) == 2.95, f"{xs} {ys}")
+    # Arrow heads point at the tip; a rectangle needs four corners on its box (a triangle has three).
+    check("arrow head tip", dsland._arrow([(10, 5), (14, 3), (14, 7)])[:4] == (10, 5, "x", -1))
+    check("triangle is not a pad", not dsland._boxy([(10, 5), (14, 3), (14, 7)], (10, 3, 14, 7)))
+    check("table rows (touching) are not pads", not dsland._apart([(0, 0, 50, 10, False), (0, 10, 50, 20, False)]))
+    # "4X (0.95)": one pitch measure holds for every pair of neighbours drawn as far apart.
+    col = [(0, y, 20, y + 10, False) for y in (0, 30, 60)]
+    d2 = [("y", 5.0, 35.0, 0.95), ("y", 0.0, 10.0, 0.6), ("x", 0.0, 20.0, 1.1)]
+    ys2, _ = dsland._solve(col, d2, "y")
+    check("repeated pitch", ys2 and round(ys2[2][0] - ys2[0][0], 2) == 1.9, str(ys2))
+
+
+def test_recognise_kind():
+    from bomtool import fplib
+    check("a fuse is not shown as a diode", not fplib._kind_ok("Diode_SMD:D_MELF", "F1"))
+    check("a fuse may match a fuse", fplib._kind_ok("Fuse:Fuse_1812_4532Metric", "F1"))
+    check("package libraries fit anything", fplib._kind_ok("Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", "F1"))
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

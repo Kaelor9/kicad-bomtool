@@ -291,10 +291,18 @@
     if (r.providers.length && (l.mpn || l.mpn_guess)) return ["mismatch", t("Not found at the distributors")];
     return ["unknown", r.providers.length ? t("No MPN to buy by") : t("No purchase data (API key or distributor BOM)")];
   }
+  // "+2" next to the need: spare parts. Say where they come from (More options before the analysis).
+  function spareTip(l) {
+    const st = (state.result && state.result.settings) || {}, extra = l.need_spare - l.need;
+    return l.kind
+      ? t("{n} spares: passives get +{p} %, at least {m} pcs (More options). Set them to 0 to buy exactly what the boards need.", { n: extra, p: st.spare_passive_pct ?? 10, m: st.spare_passive_min ?? 2 })
+      : t("{n} spares: +{p} % for other parts (More options).", { n: extra, p: st.spare_pct ?? 0 });
+  }
+  const spareBadge = l => l.need_spare > l.need ? `<span class="sub spare" title="${esc(spareTip(l))}">+${l.need_spare - l.need}</span>` : "";
   const CHECKS = {
-    fp: { n: 1, label: "Footprint", stat: l => fpStat(l) },
-    ds: { n: 2, label: "Datasheet", stat: l => dsStat(l)[0] },
-    buy: { n: 3, label: "Purchase", stat: l => buyStat(l)[0] },
+    fp: { n: 1, label: "Part ↔ footprint", stat: l => fpStat(l) },
+    ds: { n: 2, label: "Footprint ↔ datasheet", stat: l => dsStat(l)[0] },
+    buy: { n: 3, label: "Can be bought", stat: l => buyStat(l)[0] },
   };
   const isBad = st => ORDER[st] >= 3;
   const isWarn = st => st === "warn" || st === "partial";
@@ -331,7 +339,7 @@
       const nb = sts.filter(isBad).length, nw = sts.filter(isWarn).length, nok = sts.filter(st => st === "ok").length;
       const cls = nb ? "bad" : nw ? "warn" : "ok";
       return `<button class="tile ctrl-tile ${cls} ${state.filter === k ? "on" : ""}" data-filter="${k}">
-        <div class="k">${c.n} ${esc(t(c.label))}</div>
+        <div class="k">${esc(t(c.label))}</div>
         <div class="v">${nb ? esc(t("{n} errors", { n: nb })) : nw ? esc(t("{n} to check", { n: nw })) : esc(t("All OK"))}</div>
         <div class="s">${nok} OK${nb && nw ? ` · ${esc(t("{n} to check", { n: nw }))}` : ""}${state.filter === k ? " · " + esc(t("filtering")) : ""}</div></button>`;
     });
@@ -393,7 +401,7 @@
       </tr>`;
     }).join("");
     return `<div class="tbl-wrap"><table class="bom"><thead><tr><th class="num">${esc(t("Qty"))}</th><th>${esc(t("References"))}</th><th>${esc(t("Value"))}</th><th>MPN</th><th>Footprint</th>
-      <th class="ctrl" title="${esc(t("Do the symbol and footprint fit together?"))}">1 FP</th><th class="ctrl" title="${esc(t("Does the footprint match the datasheet?"))}">2 DS</th><th class="ctrl" title="${esc(t("Can it be bought as chosen?"))}">3 ${esc(t("Buy"))}</th></tr></thead>
+      <th class="ctrl" title="${esc(t("Do the symbol and footprint fit together?"))}">${esc(t("Part ↔ FP"))}</th><th class="ctrl" title="${esc(t("Does the footprint match the datasheet?"))}">${esc(t("FP ↔ datasheet"))}</th><th class="ctrl" title="${esc(t("Can it be bought as chosen?"))}">${esc(t("Buyable"))}</th></tr></thead>
       <tbody>${rows || `<tr><td colspan="8" class="empty">${esc(t("No lines"))}</td></tr>`}</tbody></table></div>`;
   }
 
@@ -410,7 +418,7 @@
       if (b.impractical) return `<tr data-line="${esc(l.id)}" class="unbuyable">
         <td class="refs">${esc(l.refs.join(", "))}</td>
         <td><span class="mono">${esc(l.mpn || l.value)}</span></td>
-        <td class="num">${l.need}${l.need_spare > l.need ? `<span class="sub">+${l.need_spare - l.need}</span>` : ""}</td>
+        <td class="num">${l.need}${spareBadge(l)}</td>
         <td class="num">–</td>
         <td colspan="3"><span class="pill mismatch">${esc(t("Not bought"))}</span> <span class="sub">${esc(t("{s} only sells a full reel of {n} pcs ({p}). Choose an alternative.", { s: b.seller, n: intl(b.qty), p: money(b.total, b.currency) }))}</span></td>
         <td class="num ${b.stock ? "" : "bad-text"}">${intl(b.stock)}</td>
@@ -420,7 +428,7 @@
       return `<tr data-line="${esc(l.id)}">
         <td class="refs">${esc(l.refs.join(", "))}</td>
         <td><span class="mono">${esc(ch ? ch.mpn : (l.mpn || (l.suggested ? l.suggested[0].mpn : l.value)))}</span>${ch ? ` <span class="pill ok">${esc(t("alt."))}</span>` : ""}</td>
-        <td class="num">${l.need}${l.need_spare > l.need ? `<span class="sub">+${l.need_spare - l.need}</span>` : ""}</td>
+        <td class="num">${l.need}${spareBadge(l)}</td>
         <td class="num"><b>${b.qty}</b></td>
         <td>${esc(b.seller)} <span class="sub mono">${esc(b.sku)}</span></td>
         <td class="num">${money(b.unit)}</td>
@@ -593,7 +601,7 @@
   };
   $("#btnExportBom").onclick = () => {
     const r = state.result;
-    const rows = [[t("References"), t("Qty"), t("Value"), "Footprint", "MPN", t("Manufacturer"), t("Datasheet"), "1 Footprint", "2 " + t("Datasheet"), "3 " + t("Purchase"), t("Notes")]];
+    const rows = [[t("References"), t("Qty"), t("Value"), "Footprint", "MPN", t("Manufacturer"), t("Datasheet"), t("Part ↔ footprint"), t("Footprint ↔ datasheet"), t("Can be bought"), t("Notes")]];
     r.lines.forEach(l => rows.push([l.refs.join(","), l.qty, l.value, l.footprint, (state.choice[l.id] || {}).mpn || l.mpn, l.mfr, l.datasheet,
       STATUS()[fpStat(l)], STATUS()[dsStat(l)[0]], STATUS()[buyStat(l)[0]], l.warnings.join(" | ")]));
     download(`${r.project.name || "bom"}_BOM.csv`, csv(rows));
@@ -697,12 +705,19 @@
     const rec = (fp.recognised || [])[0];
     const hasDs = l.datasheet && l.datasheet.startsWith("http") && !l.kind;
     const segs = [{ key: "none", name: t("alone") }, ...over];
+    // The reference faces the same way as your footprint, and both are drawn at the same scale.
+    const refGeo = ref && fp.geometry ? fpOrientLike(ref.geo, fp.geometry) : ref && ref.geo;
+    const [svgOwn, svgRef] = renderFootprintPair(
+      { geo: fp.geometry, refPads: cur.pads, opts: { details: cur.key === "lib" ? fp.overlay.details : null, dims: true, refBody: cur.body } },
+      ref ? { geo: refGeo, refPads: null, opts: { dims: true } } : null);
     return `<div class="fp-pair">
         <figure><figcaption><b>${esc(t("Your footprint"))}</b>${over.length ? ` <span class="seg small">${segs.map(r => `<button class="${r.key === cur.key ? "on" : ""}" data-refview="${r.key}" title="${esc(r.label || "")}">${esc(r.key === "none" ? r.name : "+ " + r.name)}</button>`).join("")}</span>` : ""}</figcaption>
-          <div class="fp-svg">${renderFootprint(fp.geometry, cur.pads, { details: cur.key === "lib" ? fp.overlay.details : null, dims: true, refBody: cur.body })}</div></figure>
-        <figure><figcaption><b>${esc(ref ? ref.name : t("Datasheet"))}</b>${ref ? ` <span class="sub">${esc(ref.label)}</span>` : ""}</figcaption>
-          ${ref ? `<div class="fp-svg ref">${renderFootprint(ref.geo, null, { dims: true })}</div>`
-            : `<div class="fp-svg empty-ref">${esc(!cmp ? t("Reading the datasheet …") : l.kind ? t("No size known for the part.") : t("The datasheet's dimensions are only on its drawing – see below."))}</div>`}</figure>
+          <div class="fp-svg">${svgOwn}</div>
+          <div class="fp-note sub mono">${esc((l.footprint || "").split(":").pop())}</div></figure>
+        <figure><figcaption><b>${esc(ref ? ref.name : t("Datasheet"))}</b></figcaption>
+          ${ref ? `<div class="fp-svg ref">${svgRef}</div>`
+            : `<div class="fp-svg empty-ref">${esc(!cmp ? t("Reading the datasheet …") : l.kind ? t("No size known for the part.") : t("The datasheet's dimensions are only on its drawing – see below."))}</div>`}
+          <div class="fp-note sub">${ref ? esc(ref.label) : ""}</div></figure>
       </div>
       ${fp.geometry ? measTable(fp.geometry, ref) : ""}
       ${ref && ref.rule ? `<p class="sub">${esc(ref.rule)}</p>` : ""}
@@ -750,7 +765,7 @@
   function pBuy(l) {
     const r = state.result, p = l.plan, ch = state.choice[l.id];
     const [bs, bsMsg] = buyStat(l);
-    let h = `<p class="hint">${dot(bs)} ${esc(bsMsg)} · ${esc(t("need {n} pcs", { n: l.need }))}${l.need_spare > l.need ? ` + ${l.need_spare - l.need} ${esc(t("spare"))}` : ""}</p>`;
+    let h = `<p class="hint">${dot(bs)} ${esc(bsMsg)} · ${esc(t("need {n} pcs", { n: l.need }))}${l.need_spare > l.need ? ` + ${l.need_spare - l.need} ${esc(t("spare"))} <span class="sub">(${esc(spareTip(l))})</span>` : ""}</p>`;
     if (ch) h += `<div class="notice info">${esc(t("You chose {m} ({f}) from {s}: {q} pcs for {p}. This changes the order list and carts – not the KiCad project.", { m: ch.mpn, f: ch.mfr, s: ch.seller, q: ch.qty, p: money(ch.price, ch.currency) }))} <button class="btn small" data-unchoose="${esc(l.id)}">${esc(t("Undo"))}</button></div>`;
     const dists = r.dist_boms.map(d => {
       const m = d.results[l.id];

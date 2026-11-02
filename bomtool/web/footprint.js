@@ -5,6 +5,7 @@
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const r3 = v => String(Math.round(v * 1000) / 1000);
   let uid = 0;
+  const tt = (k, v) => (window.t ? window.t(k, v) : k);
 
   function padBox(p) {
     const a = ((p.angle || 0) % 180) * Math.PI / 180;
@@ -97,7 +98,7 @@
     // 3. pad length (across) on pin 1
     out.push({ a: pt(A(p1) - eA(p1), O(p1) - eO(p1)), b: pt(A(p1) + eA(p1), O(p1) - eO(p1)), d: dir, side: sides[1], level: 2, text: r3(2 * eA(p1)), role: "padL" });
     // 4. pitch from pin 1 to its neighbour in the same row
-    const nb = reg.filter(q => q !== p1 && Math.abs(A(q) - A(p1)) < 0.05).sort((q1, q2) => Math.abs(O(q1) - O(p1)) - Math.abs(O(q2) - O(p1)))[0];
+    const nb = reg.filter(q => q !== p1 && Math.abs(A(q) - A(p1)) < 0.05 && Math.abs(O(q) - O(p1)) > 0.05).sort((q1, q2) => Math.abs(O(q1) - O(p1)) - Math.abs(O(q2) - O(p1)))[0];
     const edgeSide = A(p1) <= 0 ? sides[2] : sides[3];
     // (extension lines start at the outer pad edge, on the pad centre line)
     const outer = p => A(p) <= 0 ? A(p) - eA(p) : A(p) + eA(p);
@@ -110,7 +111,7 @@
       out.push({ a: [e.x - ex, e.y + ey], b: [e.x + ex, e.y + ey], d: "h", side: "below", level: 2, text: r3(2 * ex), role: "epW" });
       out.push({ a: [e.x + ex, e.y - ey], b: [e.x + ex, e.y + ey], d: "v", side: "right", level: 2, text: r3(2 * ey), role: "epH" });
     }
-    return out;
+    return out.filter(d => +d.text > 0.005);
   }
 
   function drawDims(dims, box, unit, font) {
@@ -146,12 +147,83 @@
         const tx = px + ux * ah * s * inside, ty = py + uy * ah * s * inside;
         parts.push(`<polygon class="arrow" points="${px},${py} ${tx - uy * aw},${ty + ux * aw} ${tx + uy * aw},${ty - ux * aw}"/>`);
       }
-      const t = esc(d.text);
-      if (d.d === "h") parts.push(`<text class="dimt" x="${label[0]}" y="${label[1]}">${t}</text>`);
-      else parts.push(`<text class="dimt" x="${label[0] - font * 0.55}" y="${label[1]}" transform="rotate(-90 ${label[0] - font * 0.55} ${label[1]})">${t}</text>`);
+      // The value sits centred on the line; when it is wider than the room between the arrows it
+      // moves past the end of the line (away from the drawing's centre) instead of over the arrows.
+      const t = esc(d.text), tw = d.text.length * font * 0.62;
+      let [lx, ly] = label;
+      if (tw > len - ah * 0.8) {
+        const shift = len / 2 + ah + tw / 2 + font * 0.2;
+        const away = d.d === "h" ? (x1 + x2) / 2 >= bx + bw / 2 : (y1 + y2) / 2 >= by + bh / 2;
+        if (d.d === "h") lx += away ? shift : -shift; else ly += away ? shift : -shift;
+      }
+      if (d.d === "h") parts.push(`<text class="dimt" x="${lx}" y="${ly}">${t}</text>`);
+      else parts.push(`<text class="dimt" x="${lx - font * 0.55}" y="${ly}" transform="rotate(-90 ${lx - font * 0.55} ${ly})">${t}</text>`);
     }
     return parts.join("");
   }
+
+
+  // ---- orientation ---------------------------------------------------------------------
+  // Turn (and for bottom-side parts mirror) a footprint by a multiple of 90 degrees, so a
+  // reference can be shown facing the same way as the user's footprint.
+  function turnGeo(geo, deg, mirror) {
+    const a = deg * Math.PI / 180, c = Math.round(Math.cos(a)), s = Math.round(Math.sin(a));
+    const T = (x, y) => { if (mirror) x = -x; return [x * c - y * s, x * s + y * c]; };
+    const pads = (geo.pads || []).map(p => {
+      const [x, y] = T(p.x, p.y);
+      let ang = p.angle || 0;
+      if (mirror) ang = -ang;
+      return Object.assign({}, p, { x, y, angle: ((ang - deg) % 360 + 360) % 360 });
+    });
+    const graphics = (geo.graphics || []).map(g => {
+      if (g.k === "rect") {
+        const pts = [[g.x1, g.y1], [g.x2, g.y1], [g.x2, g.y2], [g.x1, g.y2]].map(([x, y]) => T(x, y));
+        return { k: "poly", l: g.l, pts };
+      }
+      if (g.pts) return Object.assign({}, g, { pts: g.pts.map(([x, y]) => T(x, y)) });
+      const o = Object.assign({}, g);
+      [o.x1, o.y1] = T(g.x1, g.y1);
+      [o.x2, o.y2] = T(g.x2, g.y2);
+      if (g.xm != null) [o.xm, o.ym] = T(g.xm, g.ym);
+      return o;
+    });
+    return Object.assign({}, geo, { pads, graphics });
+  }
+
+  function padCentre(pads) {
+    const xs = pads.map(p => p.x), ys = pads.map(p => p.y);
+    return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+  }
+
+  // The turn of `ref` that puts its pins where `own` has the same pin numbers.
+  // Falls back on the overall shape (wide/tall) when the pin numbers don't match.
+  window.fpOrientLike = function (ref, own) {
+    if (!ref || !own || !(ref.pads || []).length || !(own.pads || []).length) return ref;
+    const ownPads = own.pads.filter(p => p.num !== ""), [ox, oy] = padCentre(own.pads);
+    const byNum = {};
+    ownPads.forEach(p => { (byNum[p.num] = byNum[p.num] || []).push([p.x - ox, p.y - oy]); });
+    const ext = pads => { const xs = pads.map(p => p.x), ys = pads.map(p => p.y); return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)]; };
+    const [ow, oh] = ext(own.pads);
+    let best = null;
+    for (const mirror of own.bottom ? [false, true] : [false]) {
+      for (const deg of [0, 90, 180, 270]) {
+        const g = turnGeo(ref, deg, mirror), [cx, cy] = padCentre(g.pads);
+        let err = 0, n = 0;
+        for (const p of g.pads) {
+          const q = byNum[p.num];
+          if (!q || p.num === "") continue;
+          err += Math.min(...q.map(([x, y]) => Math.hypot(p.x - cx - x, p.y - cy - y)));
+          n++;
+        }
+        const [w, h] = ext(g.pads);
+        const shape = Math.abs(Math.log((w + 0.1) / (h + 0.1)) - Math.log((ow + 0.1) / (oh + 0.1)));
+        // Pins decide when at least two of them match; otherwise the shape does.
+        const score = n >= 2 ? err / n + shape * 0.01 : 100 + shape + deg * 1e-4;
+        if (!best || score < best.score - 1e-9) best = { score, g };
+      }
+    }
+    return best.g;
+  };
 
   window.fpArcPath = arcPath;
   // The measures the drawing dimensions, by role: {pads, outer, gap, padL, padW, pitch, epW, epH}.
@@ -173,6 +245,7 @@
       this.onPick = onPick;
       this.statusOf = statusOf;
       this.sel = new Set();
+      this.side = "both";        // "top", "bottom" (seen from below, mirrored) or "both"
       this.build();
     }
 
@@ -235,13 +308,28 @@
           .bv-part.st-mismatch .bv-pad,.bv-part.st-missing .bv-pad{fill:#e8786e}
           .has-sel .bv-part:not(.sel){opacity:.3}
           .bv-part.sel .bv-pad{fill:#fff} .bv-part.sel .bv-body{fill:var(--accent);fill-opacity:.55;stroke:#fff;opacity:1;stroke-width:2px}
+          .side-top .bv-part.bot,.side-bottom .bv-part.top{opacity:.1;pointer-events:none}
+          .side-bottom .bv-part.bot .bv-pad{fill:var(--bv-pad)}
         </style><g class="bv-world">${svg.join("")}</g></svg>
-        <div class="bv-tools"><button data-bv="in" title="Zoom ind">+</button><button data-bv="out" title="Zoom ud">−</button><button data-bv="fit" title="Hele printet">⤢</button></div>
-        <div class="bv-legend"><span><i class="bad"></i>${esc(window.t ? t("Error") : "Error")}</span><span><i class="warn"></i>${esc(window.t ? t("Check") : "Check")}</span><span><i class="sel"></i>${esc(window.t ? t("Selected") : "Selected")}</span></div>
+        <div class="bv-tools"><button data-bv="in" title="${esc(tt("Zoom in"))}">+</button><button data-bv="out" title="${esc(tt("Zoom out"))}">−</button><button data-bv="fit" title="${esc(tt("Whole board"))}">⤢</button></div>
+        <div class="bv-side seg small">${[["top", "Top"], ["bottom", "Bottom"], ["both", "Both"]].map(([k, n]) => `<button data-side="${k}" class="${k === this.side ? "on" : ""}" title="${esc(tt(k === "bottom" ? "The back of the board, seen from below (mirrored)" : k === "top" ? "The front of the board" : "Both sides, seen from the front"))}">${esc(tt(n))}</button>`).join("")}</div>
+        <div class="bv-legend"><span><i class="bad"></i>${esc(tt("Error"))}</span><span><i class="warn"></i>${esc(tt("Check"))}</span><span><i class="sel"></i>${esc(tt("Selected"))}</span></div>
       </div>`;
       this.svg = this.host.querySelector("svg");
+      this.world = this.host.querySelector(".bv-world");
+      this.setSide(this.side);
       this.apply();
       this.wire();
+    }
+
+    // Seen from below the board is mirrored left-right, like turning the real board over.
+    setSide(side) {
+      this.side = side;
+      const cx = this.full[0] + this.full[2] / 2;
+      this.world.setAttribute("transform", side === "bottom" ? `translate(${2 * cx} 0) scale(-1 1)` : "");
+      this.svg.classList.toggle("side-top", side === "top");
+      this.svg.classList.toggle("side-bottom", side === "bottom");
+      this.host.querySelectorAll("[data-side]").forEach(b => b.classList.toggle("on", b.dataset.side === side));
     }
 
     apply() { this.svg.setAttribute("viewBox", this.vb.join(" ")); }
@@ -287,6 +375,10 @@
         if (g && !g.classList.contains("x")) this.onPick(g.dataset.ref);
       });
       svg.addEventListener("dblclick", () => this.fit());
+      this.host.querySelector(".bv-side").addEventListener("click", ev => {
+        const b = ev.target.closest("[data-side]");
+        if (b) { this.setSide(b.dataset.side); this.select([...this.sel], true); }
+      });
       this.host.querySelector(".bv-tools").addEventListener("click", ev => {
         const b = ev.target.closest("[data-bv]");
         if (!b) return;
@@ -302,13 +394,20 @@
       this.sel = new Set(refs || []);
       this.svg.querySelectorAll(".bv-part").forEach(g => g.classList.toggle("sel", this.sel.has(g.dataset.ref)));
       this.svg.classList.toggle("has-sel", this.sel.size > 0);
+      // A part that only sits on the side that is hidden: turn the board over.
+      const sel = [...this.sel].map(r => this.board.parts[r]).filter(Boolean);
+      if (sel.length && this.side !== "both") {
+        const want = sel.every(p => p[3]) ? "bottom" : sel.every(p => !p[3]) ? "top" : "both";
+        if (want !== this.side) this.setSide(want);
+      }
+      const mid = this.full[0] + this.full[2] / 2;
       const pts = [];
-      for (const ref of this.sel) {
-        const p = this.board.parts[ref];
-        if (!p) continue;
+      for (const p of sel) {
         const [x, y, rot, , cx, cy, hw, hh] = p;
         const a = -rot * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
-        pts.push([x + cx * c - cy * s, y + cx * s + cy * c, Math.max(hw, hh)]);
+        let px = x + cx * c - cy * s;
+        if (this.side === "bottom") px = 2 * mid - px;
+        pts.push([px, y + cx * s + cy * c, Math.max(hw, hh)]);
       }
       if (!zoom || !pts.length) return;
       // Show all selected parts, at least ~20 mm wide, never more than the whole board.
@@ -323,14 +422,15 @@
     }
   };
 
-  window.renderFootprint = function (geo, refPads, opts = {}) {
-    if (!geo || !geo.pads) return `<div class="empty">Ingen footprint-geometri</div>`;
-    const id = "fp" + (++uid);
+  // Where everything goes: the copper/outline box, the dimension levels around it and the
+  // viewBox. `opts.size` sets the scale of text and lines (so two drawings can share it), and
+  // `opts.frame` ([w, h] in mm) makes the viewBox at least that big, centred on the footprint.
+  function layout(geo, refPads, opts) {
     const pads = geo.pads.filter(p => p.type !== "np_thru_hole" || p.w > 0);
     const graphics = geo.graphics || [];
     const box = bounds(pads.concat(refPads || []), graphics, opts.refBody);
     let [x, y, w, h] = box;
-    const size = Math.max(w, h, 1);
+    const size = opts.size || Math.max(w, h, 1);
     const unit = size / 100;
     const font = Math.max(size * 0.042, 0.1);
     const dims = opts.dims ? autoDims(pads) : [];
@@ -341,6 +441,32 @@
     y -= levels.above * step + pad + (levels.above ? font : 0);
     w += (levels.left + levels.right) * step + 2 * pad + (levels.left ? font : 0) + (levels.right ? font : 0);
     h += (levels.above + levels.below) * step + 2 * pad + (levels.above ? font : 0) + (levels.below ? font : 0) + font * 1.6;
+    if (opts.frame) {
+      const [fw, fh] = opts.frame;
+      if (fw > w) { x -= (fw - w) / 2; w = fw; }
+      if (fh > h) { y -= (fh - h) / 2; h = fh; }
+    }
+    return { pads, graphics, box, size, unit, font, dims, pad, x, y, w, h };
+  }
+
+  // Two drawings side by side at the same scale and the same viewBox size, so 1 mm is equally
+  // long in both and the boxes line up. a/b: {geo, refPads, opts}. Returns [svgA, svgB].
+  window.renderFootprintPair = function (a, b) {
+    const ok = v => v && v.geo && v.geo.pads && v.geo.pads.length;
+    if (!ok(a) || !ok(b)) return [a && renderFootprint(a.geo, a.refPads, a.opts), b && renderFootprint(b.geo, b.refPads, b.opts)];
+    const la = layout(a.geo, a.refPads, a.opts || {}), lb = layout(b.geo, b.refPads, b.opts || {});
+    const size = Math.max(la.size, lb.size);
+    const A = Object.assign({}, a.opts, { size }), B = Object.assign({}, b.opts, { size });
+    const la2 = layout(a.geo, a.refPads, A), lb2 = layout(b.geo, b.refPads, B);
+    const frame = [Math.max(la2.w, lb2.w), Math.max(la2.h, lb2.h)];
+    A.frame = B.frame = frame;
+    return [renderFootprint(a.geo, a.refPads, A), renderFootprint(b.geo, b.refPads, B)];
+  };
+
+  window.renderFootprint = function (geo, refPads, opts = {}) {
+    if (!geo || !geo.pads) return `<div class="empty">Ingen footprint-geometri</div>`;
+    const id = "fp" + (++uid);
+    const { pads, graphics, box, size, unit, font, dims, pad, x, y, w, h } = layout(geo, refPads, opts);
     const parts = [];
     parts.push(`<defs><pattern id="${id}h" patternUnits="userSpaceOnUse" width="${unit * 2.2}" height="${unit * 2.2}" patternTransform="rotate(45)">
         <rect width="${unit * 2.2}" height="${unit * 2.2}" fill="var(--pad-bg)"/><line x1="0" y1="0" x2="0" y2="${unit * 2.2}" stroke="var(--pad)" stroke-width="${unit * 0.55}"/></pattern></defs>
