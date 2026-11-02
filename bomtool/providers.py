@@ -11,6 +11,7 @@ Part = {
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -302,6 +303,11 @@ class Mouser:
 
 
 # ---- Nexar / Octopart -----------------------------------------------------------
+# Nexar counts every part it returns against the plan's limit (the evaluation plan: 10 parts).
+# So it is asked last, only for what DigiKey/Mouser didn't find, for one result at a time, and once
+# the limit is reached it is left alone for an hour instead of failing on every line.
+_NEXAR_OUT = {"until": 0.0, "msg": ""}
+
 
 class Nexar:
     name = "Nexar"
@@ -349,20 +355,29 @@ class Nexar:
         cached = _cache_get(key)
         if cached is not None:
             return cached
+        if time.time() < _NEXAR_OUT["until"]:
+            raise ProviderError(_NEXAR_OUT["msg"])
         self.limiter.wait()
         res = _http("POST", "https://api.nexar.com/graphql",
                     headers={"Authorization": "Bearer " + self._auth()},
                     body={"query": self.QUERY, "variables": variables})
         if res and res.get("errors"):
-            raise ProviderError("Nexar: " + "; ".join(e.get("message", "") for e in res["errors"]))
+            msg = "; ".join(e.get("message", "") for e in res["errors"])
+            m = re.search(r"part limit of (\d+)", msg)
+            if m or "exceeded" in msg.lower():
+                _NEXAR_OUT["until"] = time.time() + 3600
+                _NEXAR_OUT["msg"] = (f"Nexar-planens grænse på {m.group(1) if m else '?'} dele er brugt – Nexar springes "
+                                     f"over. Opgradér planen på portal.nexar.com, eller fjern Nexar-nøglen.")
+                raise ProviderError(_NEXAR_OUT["msg"])
+            raise ProviderError("Nexar: " + msg)
         _cache_put(key, res)
         return res
 
     def lookup(self, pn):
-        return self._parts(self._query(pn, 3))
+        return self._parts(self._query(pn, 1))
 
     def search(self, keywords, limit=10, exact_first=None):
-        return self._parts(self._query(keywords, limit))
+        return self._parts(self._query(keywords, min(limit, 5)))
 
     def substitutes(self, pn):
         out = []
@@ -437,3 +452,10 @@ def mouser_cart(cfg, items):
 
 def make_providers(cfg):
     return [p for p in (DigiKey(cfg), Mouser(cfg), Nexar(cfg)) if p.enabled]
+
+
+def fallback_last(providers):
+    """The providers to search with: Nexar only when there is no other, since its plan limits the
+    number of parts (wide searches for alternatives would use it up at once)."""
+    main = [p for p in providers if p.name != "Nexar"]
+    return main or providers

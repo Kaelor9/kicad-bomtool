@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from . import alternatives, bom, datasheet, distbom, dsland, footprint, fplib, packages as P, pricing
 from . import fields as F
 from .kicad import Project, load_kicad_mod
-from .providers import ProviderError, make_providers
+from .providers import ProviderError, fallback_last, make_providers
 from .vfs import ProjectFiles
 
 
@@ -202,7 +202,7 @@ class Analysis:
             self.progress(f"Finder forslag til komponenter uden MPN ({i + 1}/{len(nompn)}) …",
                           70 + 5 * (i + 1) / max(1, len(nompn)))
             need = pricing.need_for(line, self.settings)[1]
-            res = alternatives.find(line, self.providers, need, self.settings, limit=3)
+            res = alternatives.find(line, fallback_last(self.providers), need, self.settings, limit=3)
             if res["items"]:
                 line["suggested"] = res["items"][:3]
                 best = res["items"][0]
@@ -211,7 +211,7 @@ class Analysis:
                 line["suggested_note"] = (f"Intet MPN i projektet – billigste der opfylder "
                                           f"{F.format_value(line['parsed']['value'], line['kind'])} "
                                           f"{line['footprint'].split(':')[-1]}: {best['mfr']} {best['mpn']}")
-                for prov in self.providers:
+                for prov in fallback_last(self.providers):
                     try:
                         part = _best_part(prov.lookup(best["mpn"]), best["mpn"])
                     except ProviderError:
@@ -224,6 +224,8 @@ class Analysis:
         found = []
         line["offers"] = []
         for prov in self.providers:
+            if prov.name == "Nexar" and found:
+                continue        # Nexar only for what the others didn't find (its plan counts parts)
             keys = [wanted] if wanted else []
             dist_key = {"DigiKey": "digikey", "Mouser": "mouser"}.get(prov.name)
             if dist_key and line["dist"].get(dist_key):
@@ -479,7 +481,7 @@ def run_alternatives(result, line_id, cfg, settings):
     line = next((l for l in result["lines"] if l["id"] == line_id), None)
     if line is None:
         raise ValueError("Ukendt linje.")
-    providers = make_providers(cfg)
+    providers = fallback_last(make_providers(cfg))
     if not providers:
         return {"items": [], "note": "Alternativer kræver mindst én grosist-API-nøgle (Indstillinger)."}
     preferred = None

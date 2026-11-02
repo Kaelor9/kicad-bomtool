@@ -112,8 +112,11 @@ komponent lyser op.
     iCloud-adresse (den i Mouser-kontoen, ikke Gmail). Brugeren skal finde mailen (tjek "Uønsket") eller bede
     Mouser (Live Chat / api@mouser.com) om at sende den igen.
   - **Order/Cart API-nøgle:** findes, men står som "Pending". Den hører til feltet "Mouser Cart API", ikke Search.
-- **Nexar:** brugeren sætter Client ID/Secret ind (Evaluation app, Client Credentials er slået til). Nexar er ikke
-  testet med en rigtig nøgle før. Felter, som planen ikke giver adgang til, kan kræve, at forespørgslen gøres mindre.
+- **Nexar:** nøglen virker (login og opslag OK, testet af brugeren 2. nov. 2026), men "Evaluation app"-planen må
+  kun returnere **10 dele**. Den første analyse brugte grænsen op med det samme ("You have exceeded your part limit
+  of 10"). Rettet på branch: Nexar bruges nu kun til dele, DigiKey/Mouser ikke fandt, med 1 resultat pr. opslag,
+  aldrig til brede alternativ-søgninger (når der er andre grosister), og efter en afvisning lades den i fred en
+  time. Med 10 dele er Nexar stadig kun til nød; en større plan vælges på portal.nexar.com → Plans.
 - Skærmbilleder af C1, C9, D8, BOOT1/RESET1 (Footprint-fanen) og J8.
 
 ---
@@ -371,6 +374,7 @@ komponent lyser op.
 | **HANDOFF.md er index og opdateres i hver ændring** | Brugerens ønske, så en anden AI kan samle projektet op. |
 | **Databladets tegnede footprint slår IPC og generiske størrelser** | Det er producentens anbefaling. F1 (Bourns MF-MSMF050/40X) fulgte tegningen, men blev vist rødt mod en generisk 1812. |
 | Tegninger læses ud fra tallene, aldrig ud fra proportionerne | Bourns tegner pads ikke i skala. Hellere intet footprint end et forkert. |
+| **Nexar er sidste udvej** (kun for dele, de andre ikke fandt; 1 resultat pr. opslag) | Nexar tæller hver returneret del mod planens grænse (evaluering: 10 dele). |
 | Referencen drejes, så den vender som brugerens footprint | Brugerens ønske ("footprints skal vende ens"). |
 | Genkendelse kun ved ≥ 90 % og kun i biblioteker for samme slags del | Brugeren syntes, det var mærkeligt, at en sikring blev "genkendt" som diode. |
 
@@ -433,6 +437,8 @@ komponent lyser op.
 - **pypdfium2 5.x** har `get_bounds()` i stedet for `get_pos()`. Begge håndteres.
 
 **Pris og alternativer**
+- **Nexar "exceeded your part limit of 10"** på den første analyse: alle 69 linjer blev slået op hos Nexar med 3
+  resultater hver, oveni DigiKey. Se valget i afsnit 7 og `fallback_last()` / `_NEXAR_OUT` i `providers.py`.
 - **Pris på 78.908 kr.** fra tilbud, der kun fandtes som hel rulle: markeres nu som `impractical`.
 - **Specs for passive forsvandt:** en dummy "1 50V" kunne ikke parses, så der bruges nu "1uF".
 - **Alternativer til kontakter viste "Footprint: unknown":** sammenligning med KiCads footprint via `by_mpn` og
@@ -505,6 +511,8 @@ komponent lyser op.
 
 Nyeste øverst. Én linje pr. ændring: dato · version/branch · hvad og hvorfor.
 
+- 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Nexar som sidste udvej: kun for dele, de andre ikke fandt,
+  1 resultat pr. opslag, ikke til alternativ-søgninger, og den lades i fred en time efter "part limit"-fejlen.
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · HANDOFF: status for Mouser- og Nexar-nøgler (ingen kodeændring).
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Brugerens feedback på footprint-fanen:
   - `bomtool/dsland.py` aflæser databladets anbefalede footprint fra tegningen og bruges i analysen og i

@@ -11,6 +11,8 @@ T = [
     # program / server
     ("Kunne ikke åbne programvinduet ({}) – bruger browseren i stedet.", "Could not open the program window ({}) – using the browser instead."),
     ("Kunne ikke finde en ledig port.", "Could not find a free port."),
+    ("Nexar-planens grænse på {} dele er brugt – Nexar springes over. Opgradér planen på portal.nexar.com, eller fjern Nexar-nøglen.",
+     "The Nexar plan's limit of {} parts is used up – Nexar is skipped. Upgrade the plan at portal.nexar.com, or remove the Nexar key."),
     ("Filen er for stor.", "The file is too large."),
     ("En uploadet fil er udløbet – upload den igen.", "An uploaded file has expired – upload it again."),
     ("Kunne ikke gemme i historikken: {}", "Could not save to history: {}"),
