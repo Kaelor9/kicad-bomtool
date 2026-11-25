@@ -100,6 +100,37 @@ komponent lyser op.
   - **"Vis det til venstre":** tolket som den tomme "Datasheet"-kasse ved siden af brugerens footprint. Den
     aflæste tegning vises dér, og den kan lægges oven på brugerens footprint med "+ Datasheet".
 
+### Planlægning: komponentlager i programmet (25. nov. 2026, intet bygget)
+Brugeren overvejer at bygge sit komponentlager ind. Det ligger i dag i Excel-filen "Mit_Elektronik_Komponent_Lager.xlsx":
+- én fane pr. komponentmappe (fx "Mappe 191224"), 97 dele registreret, mange mangler;
+- kolonner: SIDE, Manufacture, Mfr. No:, Package, Datasheet (🌐-hyperlink), TYPE, VALUE, Købt hos, Antal haves,
+  Stk. Pris, Beliggenhed, Note.
+
+**Ting i data:**
+- antal kan være tekst ("150+");
+- samme MPN kan stå to steder;
+- én pris er læst som klokkeslæt (2:41);
+- TYPE er uensartet;
+- mappe 150425 mangler Beliggenhed (fanens navn er mappen).
+
+**Foreslået plan:**
+- **Fase 1, læs Excel (A):**
+  - lagertal på hver BOM-linje, og indkøbet regnes kun for det, der mangler;
+  - lagerdele foreslås først for passive uden MPN og øverst blandt alternativer;
+  - plukliste sorteret efter mappe/side.
+- **Fase 2, programmet ejer lageret (B):** lokal fil i app_dir, import/eksport af Excel, registrering med MPN + antal +
+  mappe/side og berigelse fra API'erne, scanning af grosisternes 2D-stregkoder, fratræk efter byg, tilføj fra
+  grosist-ordrer, advarsel ved lavt lager.
+- Frarådet: at skrive tilbage i brugerens Excel-ark (C).
+
+**Åbne beslutninger hos brugeren:**
+1. A eller B;
+2. trække automatisk fra i indkøbet, eller kun vise;
+3. må en anden passiv del med samme værdi/størrelse/krav bruges;
+4. reserve-antal;
+5. fratræk efter byg;
+6. stregkodelæser.
+
 ### Næste skridt (forslag)
 - **Diodes Inc. land patterns** skriver bogstaver (X, Y, C …) på tegningen og værdierne i en tabel ved siden af.
   `dsland` læser kun tal på tegningen. Udvid med bogstav → tabel-opslag.
@@ -511,6 +542,7 @@ komponent lyser op.
 
 Nyeste øverst. Én linje pr. ændring: dato · version/branch · hvad og hvorfor.
 
+- 2026-11-25 · branch `claude/zealous-wozniak-h6k13i` · HANDOFF: plan for komponentlager i programmet (kun planlægning, ingen kode).
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · Nexar som sidste udvej: kun for dele, de andre ikke fandt,
   1 resultat pr. opslag, ikke til alternativ-søgninger, og den lades i fred en time efter "part limit"-fejlen.
 - 2026-11-02 · branch `claude/zealous-wozniak-h6k13i` · HANDOFF: status for Mouser- og Nexar-nøgler (ingen kodeændring).
